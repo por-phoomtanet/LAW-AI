@@ -22,4 +22,5 @@ export const env = {
   OPENROUTER_MODEL: process.env.OPENROUTER_MODEL ?? "deepseek/deepseek-v4-flash",
   EMBEDDING_MODEL: process.env.EMBEDDING_MODEL ?? "openai/text-embedding-3-small",
   PORT: Number(process.env.PORT ?? 4002),
+  WEB_ORIGIN: process.env.WEB_ORIGIN ?? "http://localhost:3002",
 };

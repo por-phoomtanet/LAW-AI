@@ -18,6 +18,71 @@ async function main() {
   }
 
   const adminRole = await prisma.role.findUniqueOrThrow({ where: { name: "admin" } });
+  const researcherRole = await prisma.role.findUniqueOrThrow({ where: { name: "researcher" } });
+  const subscriberRole = await prisma.role.findUniqueOrThrow({ where: { name: "subscriber" } });
+
+  // Default permissions per role per menu — เมนู settings (role permission management)
+  // ให้เฉพาะ admin, users management ให้เฉพาะ admin, chat/library ให้ทุก role ที่ login แล้ว
+  type PermissionRow = {
+    roleId: number;
+    menuKey: string;
+    canView: boolean;
+    canCreate?: boolean;
+    canUpdate?: boolean;
+    canDelete?: boolean;
+  };
+
+  const permissions: PermissionRow[] = [
+    { roleId: adminRole.id, menuKey: "chat", canView: true },
+    {
+      roleId: adminRole.id,
+      menuKey: "library",
+      canView: true,
+      canCreate: true,
+      canUpdate: true,
+      canDelete: true,
+    },
+    {
+      roleId: adminRole.id,
+      menuKey: "users",
+      canView: true,
+      canCreate: true,
+      canUpdate: true,
+      canDelete: true,
+    },
+    {
+      roleId: adminRole.id,
+      menuKey: "settings",
+      canView: true,
+      canCreate: true,
+      canUpdate: true,
+      canDelete: true,
+    },
+    { roleId: researcherRole.id, menuKey: "chat", canView: true },
+    { roleId: researcherRole.id, menuKey: "library", canView: true },
+    { roleId: subscriberRole.id, menuKey: "chat", canView: true },
+    { roleId: subscriberRole.id, menuKey: "library", canView: true },
+  ];
+
+  for (const permission of permissions) {
+    await prisma.rolePermission.upsert({
+      where: { roleId_menuKey: { roleId: permission.roleId, menuKey: permission.menuKey } },
+      create: {
+        roleId: permission.roleId,
+        menuKey: permission.menuKey,
+        canView: permission.canView,
+        canCreate: permission.canCreate ?? false,
+        canUpdate: permission.canUpdate ?? false,
+        canDelete: permission.canDelete ?? false,
+      },
+      update: {
+        canView: permission.canView,
+        canCreate: permission.canCreate ?? false,
+        canUpdate: permission.canUpdate ?? false,
+        canDelete: permission.canDelete ?? false,
+      },
+    });
+  }
 
   const adminEmail = process.env.SEED_ADMIN_EMAIL ?? "admin@law-ai.local";
   const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? "ChangeMe123!";
@@ -97,6 +162,7 @@ async function main() {
 
   console.log("Seed completed:");
   console.log(`  roles: ${roles.length}`);
+  console.log(`  role permissions: ${permissions.length}`);
   console.log(`  admin user: ${adminEmail}`);
   console.log(`  sample documents: ${sampleDocuments.length}`);
 }

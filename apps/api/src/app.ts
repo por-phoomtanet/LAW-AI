@@ -1,7 +1,10 @@
 import { Elysia } from "elysia";
+import { cors } from "@elysiajs/cors";
 import { prisma } from "@law-ai/db";
+import { env } from "./utils/env";
 import { errorHandler } from "./plugins/errorHandler";
 import { authRoutes } from "./routes/auth";
+import { userRoutes } from "./routes/users";
 
 const startedAt = Date.now();
 
@@ -9,7 +12,9 @@ const startedAt = Date.now();
 // เพื่อให้ test เรียก app.handle(new Request(...)) ได้โดยไม่ bind port จริง
 export const app = new Elysia()
   .use(errorHandler)
+  .use(cors({ origin: env.WEB_ORIGIN, credentials: true }))
   .use(authRoutes)
+  .use(userRoutes)
   .get("/api/health", async ({ set }) => {
     try {
       await prisma.$queryRaw`SELECT 1`;
