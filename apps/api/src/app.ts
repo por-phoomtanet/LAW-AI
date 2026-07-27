@@ -5,6 +5,7 @@ import { env } from "./utils/env";
 import { errorHandler } from "./plugins/errorHandler";
 import { authRoutes } from "./routes/auth";
 import { userRoutes } from "./routes/users";
+import { rolePermissionRoutes } from "./routes/rolePermissions";
 
 const startedAt = Date.now();
 
@@ -15,6 +16,7 @@ export const app = new Elysia()
   .use(cors({ origin: env.WEB_ORIGIN, credentials: true }))
   .use(authRoutes)
   .use(userRoutes)
+  .use(rolePermissionRoutes)
   .get("/api/health", async ({ set }) => {
     try {
       await prisma.$queryRaw`SELECT 1`;
