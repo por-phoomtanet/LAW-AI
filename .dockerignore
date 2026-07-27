@@ -1,0 +1,22 @@
+# Build context = repo root (docker-compose.yml ใช้ context: . สำหรับทั้ง api และ web)
+# ไฟล์นี้ใช้ร่วมกันทั้งสอง service
+
+node_modules
+**/node_modules
+apps/*/dist
+apps/*/.next
+apps/*/tests
+apps/*/.dockerignore
+packages/db/generated
+
+.git
+.husky
+.vscode
+.idea
+
+.env
+.env.*
+!.env.example
+
+*.log
+coverage
