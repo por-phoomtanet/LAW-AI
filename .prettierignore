@@ -1,0 +1,7 @@
+node_modules
+dist
+.next
+generated
+bun.lock
+CLAUDE.md
+CLAUDE_TEMPLATE.md
