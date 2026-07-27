@@ -39,7 +39,7 @@
 - **Axios** — HTTP client (single instance, interceptors) — endpoint แชทใช้ `fetch` + `ReadableStream` แทน เพราะต้อง stream SSE
 - **Zustand** — global state (authStore, chatStore — เก็บ conversation ปัจจุบัน + streaming buffer)
 - **Bun + Elysia** — runtime + web framework สำหรับ REST API + SSE endpoint (Bun แทน Node.js, Elysia แทน Express)
-- **JWT + bcrypt** — Authentication / Authorization
+- **JWT + bcrypt** — Authentication / Authorization (`@elysiajs/jwt` สำหรับ JWT, `Bun.password` built-in ของ runtime สำหรับ bcrypt hash — ไม่ใช้ `bcryptjs` เพิ่มเป็น dependency)
 - **Bun test (native)** — Unit & Integration test (API) — ทดสอบ Elysia route ตรงผ่าน `app.handle(new Request(...))` ไม่ต้องพึ่ง Supertest (Supertest ผูกกับ Express `http.Server`) — mock OpenRouter/OpenAI SDK ใน test อย่าเรียก API จริง
 - **Git Monorepo** — จัดการ codebase
 
@@ -396,6 +396,28 @@ export const app = new Elysia().use(errorHandler).get('/api/health', ...)
 
 ถ้าเขียน `.onError(...)` ตรงบน instance เดียวกับที่ประกาศ route ทั้งหมด (ไม่แยก plugin) จะไม่เจอปัญหานี้ — แต่โปรเจกต์นี้แยก error handler เป็น plugin ตาม Controller-Service-Repository pattern จึงต้องระบุ `{ as: 'global' }` เสมอ
 
+**⚠️ แต่ `{ as: 'global' }` ไม่ใช่ค่าที่ถูกต้องเสมอไป — ต้องแยกให้ออกว่า hook นั้นควรมีผล "ทั้งแอป" หรือ "เฉพาะ route group"** `global` ไหลขึ้นไปถึง app หลักและมีผลกับ**ทุก route ที่ app หลัก `.use()` เข้าไป** ไม่ใช่แค่ตัวที่ `.use()` โดยตรง — เจอมาแล้วจริงกับ `authGuard` (§ ดู plugin `authGuard.ts`): ตอนแรกใช้ `{ as: 'global' }` เหมือน `errorHandler` ผลคือ `/api/health` และ `/api/auth/login` (routes ที่**ไม่ควร**ต้องมี token) ถูกบังคับให้ต้องมี Bearer token ไปด้วย เพราะ global ไหลทะลุขึ้นไปถึง `app` ที่ mount ทุกอย่างรวมกัน
+
+| Scope | มีผลกับ | ใช้เมื่อ |
+|---|---|---|
+| `local` (default) | เฉพาะ instance ที่ประกาศเอง | ไม่ต้องแชร์ข้าม plugin |
+| `scoped` | instance ที่ประกาศ + parent ที่ `.use()` เข้าไป**โดยตรง** (ชั้นเดียว) | hook ที่ต้องมีผลเฉพาะ route group หนึ่ง เช่น `authGuard` — ต้องการให้ `/api/auth/me` มี `user` ใน context แต่ไม่อยากให้ `/api/health` โดนบังคับ token ไปด้วย |
+| `global` | ไหลขึ้นไปทุกชั้นจนถึง app บนสุดที่ประกอบร่าง route ทั้งหมด | hook ที่ต้องมีผล**ทั้งระบบ**จริงๆ เช่น `errorHandler` — ทุก route ต้อง format error เหมือนกันหมด |
+
+```ts
+// ❌ ผิด — authGuard ใช้ { as: 'global' } ทำให้ /api/health และ login โดนบังคับ token ไปด้วย
+export const authGuard = new Elysia({ name: 'authGuard' })
+  .derive({ as: 'global' }, async ({ jwt, headers }) => { ... })
+
+// ✅ ถูก — { as: 'scoped' } จำกัดผลแค่ route group ที่ .use(authGuard) โดยตรง
+export const authGuard = new Elysia({ name: 'authGuard' })
+  .derive({ as: 'scoped' }, async ({ jwt, headers }) => { ... })
+```
+
+**กฎจำง่ายๆ**: `errorHandler` (ต้องมีผลทั้งแอป) → `global` | `authGuard`/guard อื่นๆ ที่ผูกกับ route group เฉพาะ (ไม่ต้องการให้หลุดไปกระทบ route สาธารณะ เช่น health check, login) → `scoped`
+
+**roleGuard ไม่ใช้ Elysia plugin เลย** — เพื่อเลี่ยงปัญหา scope ทั้งหมดนี้ตั้งแต่ต้น `requirePermission(menuKey, action)` ใน `plugins/roleGuard.ts` เป็นแค่ plain function ที่ return `beforeHandle` callback ใช้ผ่าน `.guard({ beforeHandle: requirePermission('users', 'canCreate') })` ในไฟล์ route โดยตรง ไม่ต้อง `.use()` เป็น plugin แยกเลยจึงไม่มี scope ให้ตั้งผิด
+
 ### 5. Env Validation ตอน Startup
 ```ts
 const required = ['DATABASE_URL', 'JWT_SECRET', 'OPENROUTER_API_KEY', 'OPENAI_API_KEY']
@@ -527,33 +549,41 @@ Service throw error ภาษาไทยที่ user เข้าใจได
 
 ### Phase 2 — Authentication & User Management
 
-- [ ] 2.1 API: Login + JWT (`POST /api/auth/login`)
-  - 🧪 test: credentials ถูก → 200 + JWT | ผิด → 401
+- [x] 2.1 API: Login + JWT (`POST /api/auth/login`)
+  - 🧪 test: `bun test` → credentials ถูก → 200 + JWT ✅ | password ผิด → 401 ✅ | email ไม่มีในระบบ → 401 ✅ | ขาด field → 400 ✅ | curl จริงผ่าน HTTP (ไม่ใช่แค่ `app.handle`) → ได้ JWT จริง ✅
   - 📝 commit: `feat(api): auth login with jwt`
 
-- [ ] 2.2 API: Elysia plugin ตรวจสอบ JWT + Role Guard (`plugins/authGuard.ts`, `plugins/roleGuard.ts`)
-  - หมายเหตุ: ใช้ `@elysiajs/jwt` + `.derive()` แนบ `user` เข้า context, `.macro()` หรือ `.resolve()` สำหรับเช็ค role ก่อนเข้า handler
-  - 🧪 test: ไม่มี token → 401 | role ไม่ถึง → 403
+- [x] 2.2 API: Elysia plugin ตรวจสอบ JWT + Role Guard (`plugins/authGuard.ts`, `plugins/roleGuard.ts`)
+  - หมายเหตุ: `roleGuard.ts` ออกแบบเป็น plain function (`requirePermission`) ไม่ใช่ Elysia plugin ตั้งแต่แรก เพื่อเลี่ยงปัญหา scope (ดู FIX #4)
+  - 🧪 test: ไม่มี token → 401 ✅ | token ผิด → 401 ✅ | token ถูก → 200 พร้อม user ✅ | ไม่มี permission row (default deny) → 403 ✅ | มี permission row → 200 ✅
   - 📝 commit: `feat(api): auth plugin and role guard`
 
-- [ ] 2.3 API: CRUD user + Soft Delete
-  - 🧪 test: admin CRUD ✅ | subscriber → 403 บน user management
+  - [x] FIX #4: `authGuard.ts` ใช้ `{ as: 'global' }` เหมือน `errorHandler` ตอนแรก ผลคือ `.derive()` ไหลทะลุขึ้นไปถึง `app` หลักและบังคับทุก route (รวม `/api/health`, `/api/auth/login`) ให้ต้องมี Bearer token ไปด้วย ทั้งที่ควรมีผลแค่ route group ที่ `.use(authGuard)` โดยตรง | before: `.derive({ as: 'global' }, ...)` → after: `.derive({ as: 'scoped' }, ...)` (พิสูจน์ด้วย debug script แยกก่อนแก้ของจริง, อัปเดต Dev Standard #4 เพิ่มตาราง scope เทียบ global/scoped/local)
+    - 🧪 test: `bun test` → `/api/health` กลับมา 200 ไม่ต้องใช้ token อีกครั้ง (ก่อนแก้ได้ 401 ผิดพลาด) ✅, `/api/auth/me` ยังทำงานถูกต้องด้วย `scoped` ✅
+    - 📝 commit: `fix(api): use scoped instead of global for authGuard derive`
+
+- [x] 2.3 API: CRUD user + Soft Delete
+  - หมายเหตุ: seed permissions (admin full access ทุกเมนู, researcher/subscriber view-only chat+library) เพิ่มเข้า `packages/db/src/seed.ts` เพื่อให้ role guard มีข้อมูลจริงทดสอบ ไม่ใช่ default-deny ทั้งหมด
+  - 🧪 test: `bun test` → admin list/create/update/delete ✅ | subscriber → 403 บน `/api/users` ✅ | duplicate email → 409 ✅ | DELETE → `deletedAt` ถูกตั้งค่าจริงใน DB + หายจาก list ทุก status ✅
   - 📝 commit: `feat(api): user management with soft delete`
 
-- [ ] 2.4 Web: หน้า Login
-  - 🧪 test: login สำเร็จ → redirect chat
+- [x] 2.4 Web: หน้า Login
+  - หมายเหตุ: ลบ `bcryptjs`/`@types/bcryptjs` ออกจาก `apps/api` แล้วใช้ `Bun.password` แทนตลอดทั้งระบบ (verify แล้วว่า hash ข้ามไลบรารีกันได้ — มาตรฐาน bcrypt เดียวกัน) เพิ่ม CORS (`@elysiajs/cors`, `env.WEB_ORIGIN`) ที่ตอนแรกเป็น dependency เฉยๆ ไม่เคย mount จริง
+  - 🧪 test: `bun run build` (web) → pass ✅ | curl `/login` → render ฟอร์ม "เข้าสู่ระบบ LAW-AI" ✅ | curl POST `/api/auth/login` จริงผ่าน dev server → ได้ JWT ✅ | CORS preflight (`OPTIONS` + `Origin: http://localhost:3002`) → `Access-Control-Allow-Origin` ตรง ✅
   - 📝 commit: `feat(web): login page with jwt`
 
-- [ ] 2.5 Web: Protected routes
-  - 🧪 test: เปิดหน้า chat โดยไม่มี token → redirect `/login`
+- [x] 2.5 Web: Protected routes
+  - หมายเหตุ: ทดสอบได้แค่ฝั่ง server-render (curl) — behavior redirect จริงเกิดฝั่ง client JS หลัง hydrate ซึ่งต้องใช้ browser จริงถึงจะยืนยันได้ ไม่ใช่ claim ว่าทดสอบครบ
+  - 🧪 test: curl `/` โดยไม่มี token → server ส่ง loading state (`ant-spin`) กลับมาเสมอ ไม่เคย leak เนื้อหาที่ต้อง login ✅ | client-side redirect ไป `/login` **ยังไม่ยืนยันด้วย browser จริง**
   - 📝 commit: `feat(web): protected routes with auth guard`
 
-- [ ] 2.6 DB + API: Role Permission system
-  - 🧪 test: GET/PUT permission ทำงานตาม role
+- [x] 2.6 DB + API: Role Permission system
+  - 🧪 test: `bun test` → `GET /api/role-permissions` (admin) → 200 ✅ | `GET /api/role-permissions/:role` (auth ใดก็ได้) → 200 ✅ | role ไม่มีจริง → 404 ✅ | `PUT /api/role-permissions/:role/:menuKey` (admin) → update เฉพาะ field ที่ส่งมา ค่าอื่นไม่ถูกเขียนทับ ✅
   - 📝 commit: `feat(api): role permission management`
 
-- [ ] 2.7 Web: ใช้ Role Permission จาก server ใน UI (Sidebar/menu ตาม permission)
-  - 🧪 test: subscriber ไม่เห็นเมนู library admin
+- [x] 2.7 Web: ใช้ Role Permission จาก server ใน UI (Sidebar/menu ตาม permission)
+  - หมายเหตุ: ย้าย `app/page.tsx` เข้า `(dashboard)` route group เพื่อให้หน้าแรกได้ Sidebar+AuthGuard จาก `(dashboard)/layout.tsx` อัตโนมัติ, ใช้ `Bun.password`/CORS ตามข้อ 2.4 — หน้า `/users` `/library` `/settings` เป็น placeholder รอ CRUD UI จริงใน Phase ถัดไป, ไม่ใช้ antd `Result`/`Card`/`Image` เพราะ type conflict กับ React 19 (ตามที่ template เดิมเตือนไว้)
+  - 🧪 test: `bun run build` → 5 route ผ่าน (`/`, `/login`, `/library`, `/users`, `/settings`) ✅ | curl ทุก route → 200 ✅ | **การกรองเมนูตาม permission จริง (เช่น subscriber ไม่เห็นเมนู users) ยังไม่ยืนยันด้วย browser จริง** เพราะพึ่งพา Zustand+localStorage ฝั่ง client curl มองไม่เห็น
   - 📝 commit: `feat(web): dynamic menu from role permissions`
 
 ---
@@ -679,4 +709,8 @@ Service throw error ภาษาไทยที่ user เข้าใจได
 - **`modelTier` เก็บ model id ตรงๆ ไม่ใช่ enum lite/standard/pro**: เพราะตอนนี้มีโมเดลเดียว (`OPENROUTER_MODEL`) การเก็บเป็น string ดิบทำให้เพิ่ม/สลับโมเดลในอนาคตไม่ต้อง migrate schema
 - **Chat ไม่ใช้ Ant Design Table pattern**: หน้า chat เป็น custom component เพราะ UX ต่างจาก CRUD form/table โดยสิ้นเชิง — Ant Design ยังใช้แค่ฝั่ง admin/library
 - **Data source = Open Law Data Thailand (`ocs-krisdika` + `soc-ratchakitcha`) เท่านั้นใน Phase 1**: สำรวจแล้วพบว่านี่เป็นแหล่งเดียวที่มี bulk dataset สาธารณะของตัวบทกฎหมายไทยที่มาจากหน่วยงานทางการ (Krisdika) และ chunk ตามมาตรามาให้แล้ว — เทียบกับ `PyThaiNLP/thai-law` (แหล่งเดียวกันแต่โครงสร้างหยาบกว่า, ตัดออก) และเว็บ `searchlaw.ocs.go.th`/`deka.supremecourt.or.th` (เป็น UI ค้นหา ไม่ใช่ API/bulk, สอง dataset ข้างต้นน่าจะ scrape มาจากตรงนี้อยู่แล้ว) — **คำพิพากษาศาลฎีกาไม่มี bulk dataset สาธารณะที่ใหญ่พอ** (มีแค่ `tscc-dataset` 1,000 คดี ใช้เป็น eval set ได้แต่ไม่ใช่ corpus หลัก) จึงย้าย case-law ingestion ไป Phase ถัดไปเป็น workstream แยก (ต้อง scrape เอง + เช็ค ToS ก่อน)
+- **`roleGuard` เป็น plain function ไม่ใช่ Elysia plugin**: หลังเจอปัญหา scope ของ `.onError()`/`.derive()` (`global` vs `scoped`) สองรอบกับ `errorHandler`/`authGuard` แล้ว — `requirePermission(menuKey, action)` ออกแบบเป็น factory function ธรรมดาที่ return `beforeHandle` callback ใช้ผ่าน `.guard({ beforeHandle: ... })` ตรงในไฟล์ route แทน เพื่อไม่ต้องมี scope ให้ตั้งผิดอีก
+- **Password hashing ใช้ `Bun.password` แทน `bcryptjs`**: ทดสอบแล้วว่า hash/verify คนละไลบรารีเข้ากันได้ (มาตรฐาน bcrypt หนึ่งเดียว) — เลือก `Bun.password` เพราะ built-in ใน runtime ไม่ต้องเพิ่ม dependency, ตัดทั้ง `bcryptjs`/`@types/bcryptjs` ออกจาก `apps/api/package.json`
+- **CORS ต้องเปิดเอง**: `@elysiajs/cors` เป็น dependency ตั้งแต่ Phase 1 แต่ไม่ได้ mount จริงจนกระทั่ง Phase 2.4 ตอนเทส login จาก browser จริง — เพิ่ม `env.WEB_ORIGIN` (default `http://localhost:3002`) แล้ว `.use(cors({ origin: env.WEB_ORIGIN, credentials: true }))` ใน `app.ts`
+- **Windows: `next build` EPERM บน `.next/trace` ถ้ามี `bun run dev` ค้างอยู่**: ไม่ใช่แค่ VS Code TS server lock อย่างที่ template เดิมเข้าใจ — เจอจริงว่า `next dev`/`next build` สปอว์น child process เป็น `node.exe` แยกจาก `bun.exe` เอง ฆ่าแค่ `bun.exe` ไม่พอ ต้องเช็ค `Get-Process node` ด้วยแล้ว kill ให้หมดก่อน ถ้ายัง lock อยู่ให้ลบ `.next/` ทิ้งแล้ว build ใหม่
 -->
