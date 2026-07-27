@@ -1,0 +1,104 @@
+generator client {
+  provider        = "prisma-client-js"
+  output          = "../generated/client"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [vector]
+}
+
+model Role {
+  id          Int              @id @default(autoincrement())
+  name        String           @unique
+  label       String
+  createdAt   DateTime         @default(now())
+  users       User[]
+  permissions RolePermission[]
+}
+
+model RolePermission {
+  id        Int      @id @default(autoincrement())
+  roleId    Int
+  role      Role     @relation(fields: [roleId], references: [id])
+  menuKey   String
+  canView   Boolean  @default(true)
+  canCreate Boolean  @default(false)
+  canUpdate Boolean  @default(false)
+  canDelete Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+
+  @@unique([roleId, menuKey])
+}
+
+model User {
+  id            Int            @id @default(autoincrement())
+  name          String
+  email         String         @unique
+  passwordHash  String
+  roleId        Int
+  role          Role           @relation(fields: [roleId], references: [id])
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  deletedAt     DateTime?
+  conversations Conversation[]
+}
+
+// เอกสารกฎหมายต้นฉบับ 1 รายการ (กฎหมาย 1 ฉบับ / คำพิพากษา 1 คดี)
+model LegalDocument {
+  id           Int             @id @default(autoincrement())
+  type         String // "statute" | "court_decision" | "regulation"
+  title        String
+  citationCode String? // เช่น "มาตรา 420 ป.พ.พ." หรือเลขคดี
+  sourceUrl    String?
+  publishedAt  DateTime?
+  isActive     Boolean         @default(true)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  chunks       DocumentChunk[]
+
+  @@index([type])
+}
+
+// Chunk ระดับมาตรา/ย่อหน้า พร้อม embedding สำหรับ semantic search
+model DocumentChunk {
+  id          Int                          @id @default(autoincrement())
+  documentId  Int
+  document    LegalDocument                @relation(fields: [documentId], references: [id])
+  content     String                       @db.Text
+  chunkIndex  Int
+  contentHash String // dedupe ก่อน re-embed
+  embedding   Unsupported("vector(1536)") // 1536 มิติ = text-embedding-3-small ของ OpenAI (EMBEDDING_MODEL)
+  createdAt   DateTime                     @default(now())
+
+  @@unique([documentId, chunkIndex])
+  @@index([documentId])
+}
+
+model Conversation {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id])
+  title     String?
+  modelTier String    @default("deepseek/deepseek-v4-flash") // เก็บ OpenRouter model id ตรงๆ ไม่ใช่ enum tier
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+  deletedAt DateTime?
+}
+
+model Message {
+  id             Int          @id @default(autoincrement())
+  conversationId Int
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  role           String // "user" | "assistant"
+  content        String       @db.Text
+  citations      Json? // [{ documentId, chunkId, citedText, location }]
+  modelUsed      String? // model id ที่ใช้ตอบจริง (เผื่อ fallback)
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+}

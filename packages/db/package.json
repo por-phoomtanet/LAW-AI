@@ -1,0 +1,23 @@
+{
+  "name": "@law-ai/db",
+  "private": true,
+  "version": "0.1.0",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "generate": "prisma generate",
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "db:seed": "bun run src/seed.ts",
+    "db:execute": "prisma db execute"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.2.1"
+  },
+  "devDependencies": {
+    "prisma": "^6.2.1"
+  },
+  "prisma": {
+    "seed": "bun run src/seed.ts"
+  }
+}
