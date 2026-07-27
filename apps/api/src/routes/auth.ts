@@ -1,5 +1,6 @@
 import { Elysia, t } from "elysia";
 import { jwtPlugin } from "../plugins/jwt";
+import { authGuard } from "../plugins/authGuard";
 import { authController } from "../controllers/authController";
 
 export const authRoutes = new Elysia({ prefix: "/api/auth" })
@@ -9,4 +10,6 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
       email: t.String({ format: "email" }),
       password: t.String({ minLength: 1 }),
     }),
-  });
+  })
+  .use(authGuard)
+  .get("/me", authController.me);
