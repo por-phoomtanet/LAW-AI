@@ -5,4 +5,5 @@ export const ROUTES = {
   chat: "/",
   library: "/library",
   users: "/users",
+  settings: "/settings",
 } as const;

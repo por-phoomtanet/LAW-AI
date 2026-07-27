@@ -4,7 +4,8 @@ import { Button, Typography } from "antd";
 
 const { Title, Paragraph } = Typography;
 
-export default function Home() {
+// Placeholder — แทนที่ด้วย ChatWindow จริงใน Phase 4
+export default function HomeContent() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-8">
       <Title level={2}>LAW-AI</Title>
