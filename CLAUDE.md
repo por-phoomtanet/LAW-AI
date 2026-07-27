@@ -373,15 +373,28 @@ app.post('/api/conversations/:id/messages', handler, {
 ใช้ Zod เฉพาะจุดที่ validation logic ซับซ้อนเกินกว่า TypeBox จะแสดงออกได้ (เช่น cross-field validation ที่พึ่งพา business rule) — ไม่ใช่ default ทุก route
 
 ### 4. Global Error Handler — Elysia `.onError()`
+
+**⚠️ ต้องใส่ `{ as: 'global' }` ถ้า error handler อยู่ใน plugin แยกไฟล์ (เช่น `plugins/errorHandler.ts`)** — Elysia's lifecycle hook (`onError`, `derive`, ฯลฯ) เป็น **local scope โดย default** แปลว่าถ้าประกาศ `.onError()` บน Elysia instance แยกต่างหากแล้ว `.use()` เข้า app หลัก hook นั้น**จะไม่ทำงาน**กับ route ที่ประกาศบน app หลัก — Elysia จะ fallback ไปใช้ error response ของตัวเอง (เช่น validation error จะได้ **422** ดิบพร้อม TypeBox error object แทนที่จะเป็น 400 ตาม format ที่กำหนดไว้ และ error ที่ throw จาก route จะไม่ถูกจับด้วย) พิสูจน์แล้วจริงจากการรัน test — ไม่ใช่แค่ทฤษฎี
+
 ```ts
-new Elysia()
-  .onError(({ code, error, set }) => {
+// ❌ ผิด — ถ้าอยู่ใน plugin แยกไฟล์แล้ว .use() เข้า app หลัก จะไม่ทำงาน
+export const errorHandler = new Elysia()
+  .onError(({ code, error, set }) => { ... })
+
+// ✅ ถูก — ระบุ { as: 'global' } เป็น argument แรกของ .onError()
+export const errorHandler = new Elysia()
+  .onError({ as: 'global' }, ({ code, error, set }) => {
     if (code === 'VALIDATION') { set.status = 400; return { error: error.message } }
     if (error instanceof HttpError) { set.status = error.status; return { error: error.message } }
     set.status = 500
     return { error: 'Internal server error' }
   })
+
+// app.ts
+export const app = new Elysia().use(errorHandler).get('/api/health', ...)
 ```
+
+ถ้าเขียน `.onError(...)` ตรงบน instance เดียวกับที่ประกาศ route ทั้งหมด (ไม่แยก plugin) จะไม่เจอปัญหานี้ — แต่โปรเจกต์นี้แยก error handler เป็น plugin ตาม Controller-Service-Repository pattern จึงต้องระบุ `{ as: 'global' }` เสมอ
 
 ### 5. Env Validation ตอน Startup
 ```ts
@@ -446,54 +459,68 @@ Service throw error ภาษาไทยที่ user เข้าใจได
 
 ### Phase 1 — Project Setup
 
-- [ ] 1.0 สร้างไฟล์ `.gitignore` ที่ root
-  - 🧪 test: `git status` → node_modules, .env, dist ไม่ติด tracked
+- [x] 1.0 สร้างไฟล์ `.gitignore` ที่ root
+  - 🧪 test: `git status` → node_modules, .env, dist ไม่ติด tracked ✅
   - 📝 commit: `chore: add gitignore`
 
-- [ ] 1.1 สร้าง Monorepo structure + Bun workspaces
-  - 🧪 test: `bun install` root → ไม่มี error
+- [x] 1.1 สร้าง Monorepo structure + Bun workspaces
+  - 🧪 test: `bun install` root → 528 packages installed, ไม่มี error ✅
   - 📝 commit: `chore: init monorepo workspace`
 
-- [ ] 1.2 Docker Compose (PostgreSQL + pgvector + API + Web)
+- [x] 1.2 Docker Compose (PostgreSQL + pgvector + API + Web)
   - หมายเหตุ: ใช้ image `pgvector/pgvector:pg16` แทน `postgres:16` ธรรมดา, API service ใช้ base image `oven/bun` แทน `node`
-  - 🧪 test: `docker compose up` → ทุก container ขึ้นปกติ, `CREATE EXTENSION vector;` สำเร็จ
+  - 🧪 test: `docker compose up -d postgres` → healthy, `CREATE EXTENSION vector;` สำเร็จ ✅
   - 📝 commit: `chore: add docker-compose with pgvector`
 
-- [ ] 1.3 Prisma schema + migration + เปิด pgvector extension
-  - 🧪 test: `bunx prisma migrate dev` → migration สำเร็จ, tables ตรงกับ schema
+  - [x] FIX #1: port 4002/3002 (api/web) ชนกับโปรเจกต์อื่น (`knowledge-assistant-*`) ที่รันอยู่บนเครื่องเดียวกัน | before: เจอ `EADDRINUSE` ตอนสตาร์ท web dev server → after: ระบุ container ที่ชนด้วย `docker ps` + ถามผู้ใช้ก่อนแก้ (ผู้ใช้เลือกหยุด container เดิมเอง)
+    - 🧪 test: `docker ps` → เห็น container คู่แข่งชัดเจนก่อนแก้ปัญหา
+    - 📝 commit: `chore: remap ports to 4002/3002/5434 to avoid host conflicts`
+
+- [x] 1.3 Prisma schema + migration + เปิด pgvector extension
+  - 🧪 test: `bunx prisma migrate dev` → migration สำเร็จ, `\d "DocumentChunk"` ยืนยัน HNSW index บน embedding ✅
   - 📝 commit: `feat(db): add prisma schema and initial migration`
 
-- [ ] 1.4 Elysia API พื้นฐาน + Health endpoint + env validation
-  - 🧪 test: `GET /api/health` → `{ status: "ok", db: "connected", uptime: 123 }`
+  - [x] FIX #2: `prisma migrate dev` ครั้งแรกเจอ drift เพราะรัน `CREATE EXTENSION vector` ผ่าน psql มือก่อนมี migration | before: drift error ต้อง reset → after: `prisma migrate reset --force` (ขอ consent ผู้ใช้ก่อนตาม safety guard ของ Prisma เอง) แล้วสร้าง migration ใหม่สะอาด
+    - 🧪 test: `prisma migrate deploy` → "No pending migrations to apply" หลัง reset+migrate ✅
+    - 📝 commit: `fix(db): reset dev db to resolve pre-migration extension drift`
+
+- [x] 1.4 Elysia API พื้นฐาน + Health endpoint + env validation
+  - 🧪 test: `curl http://127.0.0.1:4002/api/health` → `{"status":"ok","db":"connected","uptime":14}` ✅ (หมายเหตุ: `localhost` ผ่าน curl บน Windows Git Bash resolve เป็น IPv6 แล้วต่อไม่ติด — ใช้ `127.0.0.1` แทนตอน debug)
   - 📝 commit: `feat(api): setup elysia with prisma and health endpoint`
 
-- [ ] 1.5 Next.js + Tailwind + Ant Design + Zustand
-  - 🧪 test: `bun run dev` → หน้าแรกแสดงผลได้ | `bun run build` → pass
+- [~] 1.5 Next.js + Tailwind + Ant Design + Zustand
+  - 🧪 test: `bun run build` → pass (Next.js 15.5.22, pin จาก 16.2.12 ที่ create-next-app ติดตั้งมาให้ตาม decision ของผู้ใช้) ✅ | `bun run dev` → **ยังไม่ยืนยันสด** เพราะ port 3002 ชนกับโปรเจกต์อื่นที่ยังรันอยู่ (ดู FIX #1) รอผู้ใช้หยุด container เดิมก่อน verify รอบสุดท้าย
   - 📝 commit: `feat(web): setup nextjs tailwind antd zustand`
 
-- [ ] 1.6 Bun test + mock OpenRouter/OpenAI client
+- [x] 1.6 Bun test + mock OpenRouter/OpenAI client
   - หมายเหตุ: ทดสอบ Elysia app ตรงผ่าน `app.handle(new Request(...))` — ไม่ต้องเปิด port จริงเหมือน Supertest
-  - 🧪 test: `bun test --filter apps/api` → PASS
+  - 🧪 test: `bun test` → 2 pass (health endpoint + openrouterClient mock pattern) ✅
   - 📝 commit: `chore(api): setup bun test with mocked llm clients`
 
-- [ ] 1.7 `.dockerignore` (api + web)
-  - 🧪 test: `docker build` → context ขนาดเล็ก
+- [x] 1.7 `.dockerignore` (api + web)
+  - หมายเหตุ: ใช้ไฟล์เดียวที่ root แทนแยกต่อแอป เพราะ `docker-compose.yml` ใช้ `context: .` (repo root) สำหรับทั้งสอง service — .dockerignore ต่อแอปจะไม่ถูกใช้เว้นแต่ตั้งชื่อแบบ BuildKit-specific (`<Dockerfile>.dockerignore`) ซึ่งพึ่งพา BuildKit เกินไปสำหรับ setup พื้นฐาน
+  - 🧪 test: ตรวจ pattern ครอบคลุม node_modules/.next/dist/tests/.env ของทั้งสอง workspace ✅
   - 📝 commit: `chore: add dockerignore`
 
-- [ ] 1.8 ESLint + Prettier + lint-staged + Husky
-  - 🧪 test: `bun run lint` → ไม่มี error
+- [x] 1.8 ESLint + Prettier + lint-staged + Husky
+  - 🧪 test: `bun run lint` → exit 0 (clean) ✅ | ใส่ `any` ทดสอบ → `error  Unexpected any... @typescript-eslint/no-explicit-any`, exit 1 ✅ (ลบไฟล์ทดสอบออกหลังยืนยัน)
   - 📝 commit: `chore: add eslint prettier lint-staged`
 
-- [ ] 1.9 Env Validation + Global Error Handler
-  - 🧪 test: ไม่มี `OPENROUTER_API_KEY` → crash พร้อม error ชัดเจนตอน startup
+- [x] 1.9 Env Validation + Global Error Handler
+  - 🧪 test: ไม่มี `OPENROUTER_API_KEY` (ค่าว่าง `""`) → `error: Missing env: OPENROUTER_API_KEY` ตอน startup ✅
   - 📝 commit: `feat(api): env validation and global error handler`
 
-- [ ] 1.10 Elysia schema validation (`t.Object`) บนทุก route ที่รับ body/query
-  - 🧪 test: POST body ขาด field required → 400 (Elysia validation error format, ปรับ status code ได้ใน `.onError()`)
+  - [x] FIX #3: `errorHandler` เป็น Elysia plugin แยกไฟล์ (`plugins/errorHandler.ts`) แล้ว `.use()` เข้า app หลัก — `onError` เป็น **local scope by default** ทำให้ validation error ได้ 422 ดิบจาก Elysia เองแทนที่จะเป็น 400 ตาม format ที่กำหนด และ `HttpError` ที่ throw จาก route ไม่ถูกจับเลย (response ไม่ใช่ JSON) | before: `new Elysia().onError((...) => {...})` → after: `new Elysia().onError({ as: 'global' }, (...) => {...})` (อัปเดต Dev Standard #4 ด้วยแล้ว)
+    - 🧪 test: `bun test` → validation error 400 ✅, valid body 200 ✅, `ConflictError` → 409 พร้อมข้อความไทย ✅
+    - 📝 commit: `fix(api): scope global error handler plugin correctly`
+
+- [x] 1.10 Elysia schema validation (`t.Object`) บนทุก route ที่รับ body/query
+  - 🧪 test: POST body ขาด field required → 400 หลังแก้ FIX #3 (Elysia validation error format) ✅ | body ถูกต้อง → 200 พร้อม echo ✅
   - 📝 commit: `feat(api): add elysia schema validation`
 
-- [ ] 1.11 Seed script (roles + admin user + เอกสารกฎหมายตัวอย่าง 2-3 ฉบับ)
-  - 🧪 test: `bunx prisma db seed` → roles + users + เอกสารตัวอย่าง ✅ | รันซ้ำไม่ error
+- [x] 1.11 Seed script (roles + admin user + เอกสารกฎหมายตัวอย่าง 2-3 ฉบับ)
+  - หมายเหตุ: `embedding` เป็น `Unsupported("vector(1536)")` — Prisma Client ไม่มี field นี้ใน create/update type ต้อง insert ผ่าน `$executeRaw` เท่านั้น (ใช้ placeholder vector ศูนย์ทั้งหมด ไม่ใช่ embedding จริง)
+  - 🧪 test: `bun run src/seed.ts` → roles 3 + admin user + เอกสารตัวอย่าง 3 ฉบับ ✅ | รันซ้ำไม่ error (upsert + `ON CONFLICT`) ✅ | ตรวจผ่าน `psql` ยืนยันข้อมูลตรง ✅
   - 📝 commit: `chore(db): add seed script`
 
 ---
