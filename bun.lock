@@ -20,6 +20,7 @@
       "dependencies": {
         "@elysiajs/cors": "^1.2.0",
         "@elysiajs/jwt": "^1.2.0",
+        "@law-ai/core": "workspace:*",
         "@law-ai/db": "workspace:*",
         "elysia": "^1.2.10",
         "openai": "^4.77.0",
@@ -51,6 +52,10 @@
         "typescript": "^5",
       },
     },
+    "packages/core": {
+      "name": "@law-ai/core",
+      "version": "0.1.0",
+    },
     "packages/db": {
       "name": "@law-ai/db",
       "version": "0.1.0",
@@ -59,6 +64,14 @@
       },
       "devDependencies": {
         "prisma": "^6.2.1",
+      },
+    },
+    "packages/ingestion": {
+      "name": "@law-ai/ingestion",
+      "version": "0.1.0",
+      "dependencies": {
+        "@law-ai/core": "workspace:*",
+        "@law-ai/db": "workspace:*",
       },
     },
   },
@@ -171,7 +184,11 @@
 
     "@law-ai/api": ["@law-ai/api@workspace:apps/api"],
 
+    "@law-ai/core": ["@law-ai/core@workspace:packages/core"],
+
     "@law-ai/db": ["@law-ai/db@workspace:packages/db"],
+
+    "@law-ai/ingestion": ["@law-ai/ingestion@workspace:packages/ingestion"],
 
     "@law-ai/web": ["@law-ai/web@workspace:apps/web"],
 

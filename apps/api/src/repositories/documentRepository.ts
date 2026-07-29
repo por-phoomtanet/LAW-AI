@@ -1,0 +1,30 @@
+import { prisma } from "@law-ai/db";
+
+export const documentRepository = {
+  findMany(docType?: string) {
+    return prisma.document.findMany({
+      where: { isActive: true, ...(docType ? { docType } : {}) },
+      orderBy: { title: "asc" },
+    });
+  },
+
+  countByDocType() {
+    return prisma.document.groupBy({
+      by: ["docType"],
+      where: { isActive: true },
+      _count: { _all: true },
+    });
+  },
+
+  findByIdWithLatestVersion(id: number) {
+    return prisma.document.findFirst({
+      where: { id, isActive: true },
+      include: {
+        versions: {
+          where: { isLatest: true },
+          include: { passages: { orderBy: { ordinal: "asc" } } },
+        },
+      },
+    });
+  },
+};

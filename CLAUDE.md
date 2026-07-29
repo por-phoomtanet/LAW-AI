@@ -683,10 +683,15 @@ Service throw error ภาษาไทยที่ user เข้าใจได
   - 🧪 test: `packages/ingestion/tests/ingestOcsKrisdika.test.ts` (6 pass) — hierarchy ผูก parentId ถูก (มาตราลูกของหมวด), dedupe เห็น contentHash ตรงเดิม, เพิ่มเวอร์ชันใหม่ → isLatest ของเวอร์ชันเก่าถูกตั้ง false อัตโนมัติ, **real-world bug regression test**: raw dataset ประกาศ `is_latest:true` พร้อมกันทุก record → ต้องเหลือ isLatest จริงแค่ 1 ตัวจาก timeline_code suffix สูงสุด ไม่ขึ้นกับลำดับประมวลผล, sections ว่าง/blank ไม่ throw ✅ | `bun test` (root, ทั้ง monorepo) → 42 pass ไม่กระทบ suite เดิม ✅ | ingest จริง 12 เดือนสำเร็จ 0 errors ✅
   - 📝 commit: `feat(ingestion): port ocs-krisdika parser and ingest law library corpus`
 
-- [ ] 4.3 API: browse endpoints
-  - `GET /api/documents` — list พร้อม filter `docType`, group นับจำนวนต่อหมวด (กฎหมายหลัก/กฎหมายลำดับรอง จาก `packages/core/src/documentCategory.ts`'s `PRIMARY_LAW_TYPES`/`SUBORDINATE_LAW_TYPES`) สำหรับ sidebar ซ้ายแบบภาพตัวอย่าง fourcorners.law
-  - `GET /api/documents/:id` — รายละเอียดเอกสาร + TOC tree ของเวอร์ชัน `isLatest` (nested หมวด→ส่วนที่→มาตรา จาก `Passage.parentId`) + เนื้อหาเต็มของมาตราที่เลือก
-  - authGuard เท่านั้น (ไม่ผูก role-based restriction เพิ่ม — เมนู `library` มี `canView` ให้ทุก role อยู่แล้วตาม seed เดิม)
+- [x] 4.3 API: browse endpoints
+  - `documentRepository.ts` (`findMany`/`countByDocType`/`findByIdWithLatestVersion`) → `services/library/documentService.ts` (group `docType` counts เป็น primary/subordinate ผ่าน `categorizeDocType`, `buildToc()` แปลง flat `Passage[]` + `parentId` เป็น nested tree) → `documentController.ts` + `routes/documents.ts`
+  - `GET /api/documents?docType=X` — คืน `categories` (สรุป 2 หมวดใหญ่พร้อมจำนวน), `docTypes` (จำนวนต่อ docType ย่อย), `documents` (list, filter ได้)
+  - `GET /api/documents/:id` — คืนเอกสาร + `version` (ล่าสุดเท่านั้น, filter `isLatest`) + `toc` (nested tree, ทุก node มี `children: []` เสมอแม้ไม่มีลูก)
+  - authGuard เท่านั้น ไม่มี `requirePermission` เพิ่ม (เมนู `library` มี `canView` ให้ทุก role ตาม seed เดิม)
+  - เพิ่ม `apps/api` เป็น dependent ของ `@law-ai/core` ใหม่ — ต้องอัปเดต `apps/api/Dockerfile`/`apps/web/Dockerfile` ให้ copy `packages/core/package.json` + `packages/ingestion/package.json` เข้า deps stage ด้วย (workspace member ใหม่ต้องมีครบก่อน `bun install --frozen-lockfile` จะ resolve ได้ — บั๊ก class เดิมที่เจอซ้ำหลายรอบ) แต่ `packages/core` เองไม่มี dependency จึงไม่มี `node_modules` ให้ copy ต่อ (ต่างจาก `packages/db`/`apps/api`)
+
+  - 🧪 test: `apps/api/tests/documents.test.ts` (5 pass) — 401 ไม่มี token, list คืน category counts ครบ 2 หมวด + filter `docType` ได้ถูกต้อง, detail คืน TOC tree ที่ทุก node มี `children` เป็น array, id ไม่มีจริง → 404 ✅ | `bun test` (root) → 41 pass ไม่กระทบของเดิม ✅ | live curl ผ่าน `docker compose` จริง — list เห็น 117/35 หมวดหลัก/รอง, detail ของ พ.ร.บ.สถาบันบัณฑิตพัฒนบริหารศาสตร์ 2562 เห็น `หมวด ๑` ผูกลูกมาตรา 7-18 ถูกต้องครบ 12 มาตรา ✅
+  - 📝 commit: `feat(api): law library browse endpoints with category counts and toc tree`
 
 - [ ] 4.4 Web: หน้า browse คลังกฎหมาย
   - แทนที่ placeholder `/library` เดิม — ซ้าย: sidebar หมวดหมู่พร้อมจำนวน (เหมือนภาพตัวอย่าง), กลาง/ขวา: รายการเอกสาร + panel รายละเอียดที่มี TOC tree ยุบ/ขยายได้ (หมวด→ส่วนที่→มาตรา) คลิกมาตราแล้วเลื่อนไปเนื้อหา
