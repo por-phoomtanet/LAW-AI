@@ -6,13 +6,18 @@
   "types": "./src/index.ts",
   "scripts": {
     "generate": "prisma generate",
-    "migrate:dev": "prisma migrate dev",
-    "db:push": "prisma db push",
-    "db:migrate": "prisma migrate deploy",
-    "db:seed": "bun src/seed.ts",
-    "db:reset": "prisma migrate reset --force",
+    "migrate:dev": "bun --env-file=../../.env run _migrate:dev",
+    "_migrate:dev": "prisma migrate dev",
+    "db:push": "bun --env-file=../../.env run _db:push",
+    "_db:push": "prisma db push",
+    "db:migrate": "bun --env-file=../../.env run _db:migrate",
+    "_db:migrate": "prisma migrate deploy",
+    "db:seed": "bun --env-file=../../.env src/seed.ts",
+    "db:reset": "bun --env-file=../../.env run _db:reset",
+    "_db:reset": "prisma migrate reset --force",
     "db:setup": "bun run db:migrate && bun run db:seed",
-    "db:execute": "prisma db execute"
+    "db:execute": "bun --env-file=../../.env run _db:execute",
+    "_db:execute": "prisma db execute"
   },
   "dependencies": {
     "@prisma/client": "^6.2.1"
