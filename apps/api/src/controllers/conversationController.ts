@@ -9,6 +9,7 @@ function toSummary(conversation: Conversation) {
     id: conversation.id,
     title: conversation.title,
     modelTier: conversation.modelTier,
+    mode: conversation.mode,
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
   };
@@ -22,6 +23,7 @@ function toDetail(conversation: ConversationWithMessages) {
       role: message.role,
       content: message.content,
       modelUsed: message.modelUsed,
+      citations: message.citations,
       createdAt: message.createdAt,
     })),
   };
@@ -33,8 +35,8 @@ export const conversationController = {
     return { data: conversations.map(toSummary) };
   },
 
-  async create({ user, body }: { user: JwtPayload; body?: { modelId?: string } }) {
-    const conversation = await conversationService.create(user.userId, body?.modelId);
+  async create({ user, body }: { user: JwtPayload; body?: { modelId?: string; mode?: string } }) {
+    const conversation = await conversationService.create(user.userId, body?.modelId, body?.mode);
     return { data: toSummary(conversation) };
   },
 

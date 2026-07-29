@@ -15,8 +15,19 @@ export const conversationRepository = {
     });
   },
 
-  create(userId: number, modelTier: string) {
-    return prisma.conversation.create({ data: { userId, modelTier } });
+  create(userId: number, modelTier: string, mode?: string) {
+    return prisma.conversation.create({
+      data: { userId, modelTier, ...(mode ? { mode } : {}) },
+    });
+  },
+
+  // lookup เบาๆ แค่ mode — ใช้ตอน dispatch ว่าจะเรียก chatCompletionService (Phase 3) หรือ
+  // legalChatCompletionService (Phase 5.5) โดยไม่ต้อง fetch messages ทั้งก้อนมาก่อน
+  findModeForUser(id: number, userId: number) {
+    return prisma.conversation.findFirst({
+      where: { id, userId, deletedAt: null },
+      select: { mode: true },
+    });
   },
 
   softDelete(id: number) {
@@ -28,6 +39,8 @@ export const conversationRepository = {
     role: "user" | "assistant";
     content: string;
     modelUsed?: string;
+    // เฉพาะแชทกฎหมาย (Phase 5.5) ใช้ — general chat ไม่เคยส่งมา ค่าเป็น undefined เหมือนเดิม
+    citations?: object;
   }) {
     return prisma.message.create({ data });
   },

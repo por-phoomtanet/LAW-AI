@@ -12,15 +12,16 @@ export const conversationService = {
   // — ห้าม hardcode model id, อ่านจาก env เสมอเพื่อสลับโมเดลได้โดยไม่ deploy ใหม่) ถ้าผู้ใช้ระบุ
   // modelId มา (Phase 5.1) ต้อง validate กับ AiModel ที่ isActive=true ก่อนเสมอ กัน client ส่ง
   // model id ที่ไม่ได้เปิดให้ใช้/ไม่มีอยู่จริงตรงเข้า OpenRouter
-  async create(userId: number, modelId?: string) {
+  // mode (Phase 5.3/5.5) แยกแชททั่วไป/แชทกฎหมาย — ไม่ส่งมา default "general" เหมือนเดิมทุกอย่าง
+  async create(userId: number, modelId?: string, mode?: string) {
     if (!modelId) {
-      return conversationRepository.create(userId, env.OPENROUTER_MODEL);
+      return conversationRepository.create(userId, env.OPENROUTER_MODEL, mode);
     }
     const model = await aiModelRepository.findActiveByModelId(modelId);
     if (!model) {
       throw new HttpError(400, "โมเดลที่เลือกไม่พร้อมใช้งาน");
     }
-    return conversationRepository.create(userId, model.modelId);
+    return conversationRepository.create(userId, model.modelId, mode);
   },
 
   async getWithMessages(id: number, userId: number) {
