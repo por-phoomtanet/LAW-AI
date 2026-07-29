@@ -9,6 +9,8 @@ COPY packages/db/package.json packages/db/package.json
 RUN bun install --frozen-lockfile
 
 FROM base AS build
+ARG NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 COPY --from=deps /repo/node_modules ./node_modules
 COPY --from=deps /repo/apps/web/node_modules ./apps/web/node_modules
 COPY . .

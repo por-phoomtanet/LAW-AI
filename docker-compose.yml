@@ -37,9 +37,13 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      # NEXT_PUBLIC_* ต้องส่งเป็น build arg — Next.js inline ค่านี้เข้า client JS bundle
+      # ตอน build (ไม่ใช่อ่านจาก process.env ตอน container รัน) และ .dockerignore กัน .env
+      # ไม่ให้เข้า build context ด้วย ดังนั้น environment/env_file ตอน runtime ไม่มีผลกับตัวนี้เลย
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
       PORT: "3002"
     ports:
       - "3002:3002"

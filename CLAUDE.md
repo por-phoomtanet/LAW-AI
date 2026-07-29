@@ -657,6 +657,35 @@ Service throw error ภาษาไทยที่ user เข้าใจได
 
 ---
 
+### Phase 4 — คลังกฎหมาย: Browse ตามหมวดหมู่ + TOC รายมาตรา
+
+> หมายเหตุ: Phase นี้คือ **port โค้ดที่ verify กับข้อมูลจริงแล้วจาก branch `chore/trim-schema-phase-1-2`** ไม่ใช่ออกแบบใหม่ตั้งแต่ต้น — branch นั้นเคย ingest จริงและตรวจสอบ raw dataset ของ `ocs-krisdika` ละเอียดจนรู้ gotcha สำคัญหลายจุดแล้ว (ดูรายละเอียดในแต่ละ task ด้านล่าง) งานนี้คือ trim เอาเฉพาะส่วนที่จำเป็นสำหรับ "TOC + หมวดหมู่" มาใช้กับ `main` **ตั้งใจตัดออกไม่ทำรอบนี้**: หัวข้อกฎหมาย/tag (`LegalTopic`/`DocumentTopic` — ตรวจสอบแล้วว่า ocs-krisdika ไม่มี field นี้เลย `category = null` 100% ต้อง classify ด้วย LLM แยกต่างหาก), คำอธิบาย/cross-reference ที่คลิกได้ในเนื้อหา (`InlineReference` — ต้อง derive เองด้วย regex/NLP เป็น batch job แยก ไม่มีใน raw dataset), UI version-timeline slider (schema รองรับอยู่แล้วเพราะ `Passage` ผูกกับ `DocumentVersion` แต่ frontend timeline component ไม่ทำรอบนี้), และ `soc-ratchakitcha` OCR fallback (24.6% ของ records ที่ `sections` ว่างจะถูกข้ามไปก่อน ไม่ fallback)
+
+- [ ] 4.1 DB: เพิ่ม `Document`/`DocumentVersion`/`Passage` model (ไม่แตะ `LegalDocument`/`DocumentChunk` เดิมที่ chat/seed ใช้อยู่ — เพิ่มคู่ขนานไปก่อน)
+  - Port จาก `chore/trim-schema-phase-1-2`'s `packages/db/prisma/schema.prisma` แบบตัดทอน — **ไม่เอา** `Workspace`/multi-tenancy (`main` ยังไม่มี concept นี้), `CourtCaseMeta` (คำพิพากษา ไม่อยู่ใน scope), `LegalTopic`/`DocumentTopic`/`InlineReference` (ดูเหตุผลข้างบน), `ResearchSession`/`ResearchMessage`/`Citation` (เป็นของ RAG chat ที่ตัดสินใจไม่ทำรอบนี้)
+  - `Document.lawCode` (`@unique`) = `law_code` จาก dataset — ผูกทุกเวอร์ชันของกฎหมายฉบับเดียวกันเข้าด้วยกัน (พิสูจน์แล้วจากข้อมูลจริงว่าใช้ได้ เช่น พ.ร.บ.ลิขสิทธิ์ 2537 มี 7 เวอร์ชันใน dataset), `docType` เก็บ prefix ดิบ (เช่น "พระราชบัญญัติ") ไม่เก็บ "หมวดหมู่" (กฎหมายหลัก/ลำดับรอง) เป็น column แยก — คำนวณจาก `docType` ฝั่ง backend แทน (ดู 4.3)
+  - `DocumentVersion.isLatest` — **ห้ามเชื่อ `record.is_latest` จาก raw dataset ตรงๆ** ตรวจสอบแล้วว่าเชื่อไม่ได้ (ทุกเวอร์ชันของกฎหมายที่มีหลายเวอร์ชันประกาศ `is_latest: true` พร้อมกันหมด เป็น bug เชิงระบบของ dataset ไม่ใช่ edge case) ต้องคำนวณจาก `timeline_code` suffix ตัวเลขสูงสุดแทน
+  - `Passage.sectionType`/`parentId` — สร้าง tree หมวด→ส่วนที่→มาตรา จาก `sectionTypeId` ของ dataset ตรงๆ (verify แล้วจากข้อมูลจริง ไม่ต้องเดา): `1,3`=title/preamble, `4`=มาตรา (`section`), `8`=หมวด (`chapter`), `9`=ส่วนที่ (`part`), `2,13,14,15`=royal_name/transitional/signatory/note — 1 มาตราอาจมีหลาย row ดิบ (แยกด้วย `contentNo`) ต้อง group เป็น 1 `Passage` ก่อน insert
+  - migration ใหม่ (ห้ามชนกับ migration ของ `LegalDocument`/`DocumentChunk` เดิม)
+
+- [ ] 4.2 Ingestion script: `packages/ingestion` (ดาวน์โหลด + parse + upsert)
+  - Port `packages/ingestion/src/{ingestOcsKrisdika.ts, sources/ocsKrisdika.ts}` และ `packages/core/src/documentCategory.ts` จาก `chore/trim-schema-phase-1-2` — ตัด `ratchakitchaFallback.ts` ออก (ตามหมายเหตุ scope ข้างบน — record ที่ `sections` ว่างให้ skip พร้อม log แทน)
+  - `deriveDocType(title)`: match title prefix ตามลำดับที่ตรวจสอบแล้วจากข้อมูลจริง (285 ฉบับปี 2019 ครบทุก docType) — ต้องเช็ค `"พระราชบัญญัติประกอบรัฐธรรมนูญ"` ก่อน `"พระราชบัญญัติ"` เสมอ (prefix ซ้อนกัน `startsWith` ผิดลำดับจะ match ผิด)
+  - ดาวน์โหลดจาก `https://huggingface.co/datasets/open-law-data-thailand/ocs-krisdika/resolve/main/data/{year}/{year}-{month}.jsonl` เหมือนเดิม — ไม่ต้องมี HF token (public dataset)
+  - error ต่อ record (เช่น embeddings API หมด credit) ต้องไม่ทำให้ record อื่นในเดือนเดียวกัน fail ไปด้วย — เก็บ error list รายงานแทนการ throw ทิ้งทั้ง batch (pattern เดิมจาก `IngestResult.errors`)
+  - CLI runner (`runIngest.ts`) รับ range ปี/เดือน — เริ่ม ingest ปีตัวอย่าง 1 ปีก่อน (ไม่ทำทั้ง dataset ในรอบแรก)
+
+- [ ] 4.3 API: browse endpoints
+  - `GET /api/documents` — list พร้อม filter `docType`, group นับจำนวนต่อหมวด (กฎหมายหลัก/กฎหมายลำดับรอง จาก `packages/core/src/documentCategory.ts`'s `PRIMARY_LAW_TYPES`/`SUBORDINATE_LAW_TYPES`) สำหรับ sidebar ซ้ายแบบภาพตัวอย่าง fourcorners.law
+  - `GET /api/documents/:id` — รายละเอียดเอกสาร + TOC tree ของเวอร์ชัน `isLatest` (nested หมวด→ส่วนที่→มาตรา จาก `Passage.parentId`) + เนื้อหาเต็มของมาตราที่เลือก
+  - authGuard เท่านั้น (ไม่ผูก role-based restriction เพิ่ม — เมนู `library` มี `canView` ให้ทุก role อยู่แล้วตาม seed เดิม)
+
+- [ ] 4.4 Web: หน้า browse คลังกฎหมาย
+  - แทนที่ placeholder `/library` เดิม — ซ้าย: sidebar หมวดหมู่พร้อมจำนวน (เหมือนภาพตัวอย่าง), กลาง/ขวา: รายการเอกสาร + panel รายละเอียดที่มี TOC tree ยุบ/ขยายได้ (หมวด→ส่วนที่→มาตรา) คลิกมาตราแล้วเลื่อนไปเนื้อหา
+  - ใช้ Ant Design (Table/Tree/List) ได้ตาม Dev Standard ปกติ — ต่างจากหน้า chat ที่เป็น custom component ทั้งหมด
+
+---
+
 
 ---
 
