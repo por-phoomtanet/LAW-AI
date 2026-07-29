@@ -8,6 +8,7 @@ import { userRoutes } from "./routes/users";
 import { rolePermissionRoutes } from "./routes/rolePermissions";
 import { conversationRoutes } from "./routes/conversations";
 import { documentRoutes } from "./routes/documents";
+import { aiModelRoutes } from "./routes/aiModels";
 
 const startedAt = Date.now();
 
@@ -21,6 +22,7 @@ export const app = new Elysia()
   .use(rolePermissionRoutes)
   .use(conversationRoutes)
   .use(documentRoutes)
+  .use(aiModelRoutes)
   .get("/api/health", async ({ set }) => {
     try {
       await prisma.$queryRaw`SELECT 1`;

@@ -33,8 +33,8 @@ export const conversationController = {
     return { data: conversations.map(toSummary) };
   },
 
-  async create({ user }: { user: JwtPayload }) {
-    const conversation = await conversationService.create(user.userId);
+  async create({ user, body }: { user: JwtPayload; body?: { modelId?: string } }) {
+    const conversation = await conversationService.create(user.userId, body?.modelId);
     return { data: toSummary(conversation) };
   },
 

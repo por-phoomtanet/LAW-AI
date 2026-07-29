@@ -80,6 +80,28 @@ describe("Conversation CRUD (Phase 3.1)", () => {
     conversationId = body.data.id;
   });
 
+  test("create conversation with valid modelId uses that model instead of env default", async () => {
+    const model = await prisma.aiModel.findFirstOrThrow({ where: { isActive: true } });
+    const response = await authedRequest("/api/conversations", ownerToken, {
+      method: "POST",
+      body: JSON.stringify({ modelId: model.modelId }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.modelTier).toBe(model.modelId);
+
+    await prisma.conversation.delete({ where: { id: body.data.id } }).catch(() => undefined);
+  });
+
+  test("create conversation with invalid/inactive modelId → 400", async () => {
+    const response = await authedRequest("/api/conversations", ownerToken, {
+      method: "POST",
+      body: JSON.stringify({ modelId: "not-a-real-model/does-not-exist" }),
+    });
+    expect(response.status).toBe(400);
+  });
+
   test("owner lists their own conversation", async () => {
     const response = await authedRequest("/api/conversations", ownerToken);
     const body = await response.json();

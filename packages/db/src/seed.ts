@@ -103,6 +103,26 @@ async function main() {
     },
   });
 
+  // โมเดล AI ที่เปิดให้เลือกได้ (Phase 5.1) — ตัวที่ตั้งใน OPENROUTER_MODEL ปัจจุบันต้องอยู่
+  // ในลิสต์นี้เสมอ กัน conversation เก่าที่ผูก modelTier ตัวนี้ไว้แล้วหา label โชว์ไม่เจอ
+  const aiModels = [
+    { modelId: "anthropic/claude-opus-5", label: "Claude Opus 5 (แม่นยำสูงสุด)", sortOrder: 1 },
+    { modelId: "anthropic/claude-sonnet-5", label: "Claude Sonnet 5 (เร็ว สมดุล)", sortOrder: 2 },
+    {
+      modelId: "deepseek/deepseek-v4-flash",
+      label: "DeepSeek V4 Flash (เร็วที่สุด)",
+      sortOrder: 3,
+    },
+  ];
+
+  for (const model of aiModels) {
+    await prisma.aiModel.upsert({
+      where: { modelId: model.modelId },
+      create: { ...model, isActive: true },
+      update: { label: model.label, sortOrder: model.sortOrder },
+    });
+  }
+
   // เอกสารกฎหมายตัวอย่าง — สำหรับทดสอบ schema/relation เท่านั้น ไม่ใช่ ingestion จริง
   // ข้อมูลจริงจาก Open Law Data Thailand มาจาก ingestion pipeline ใน Phase 3
   const sampleDocuments = [
@@ -164,6 +184,7 @@ async function main() {
   console.log(`  roles: ${roles.length}`);
   console.log(`  role permissions: ${permissions.length}`);
   console.log(`  admin user: ${adminEmail}`);
+  console.log(`  ai models: ${aiModels.length}`);
   console.log(`  sample documents: ${sampleDocuments.length}`);
 }
 

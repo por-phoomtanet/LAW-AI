@@ -146,6 +146,19 @@ model Passage {
   @@index([versionId, parentId])
 }
 
+// รายชื่อโมเดล AI ที่เปิดให้ผู้ใช้เลือกได้ (ทั้งแชททั่วไปและแชทกฎหมาย) — ดึงจาก DB แทนการ
+// hardcode ในโค้ด เพื่อเพิ่ม/ปิดโมเดลได้โดยไม่ต้อง deploy ใหม่ (Phase 5.1)
+model AiModel {
+  id        Int      @id @default(autoincrement())
+  modelId   String   @unique // OpenRouter model id ตรงๆ เช่น "anthropic/claude-opus-5"
+  label     String // ชื่อโชว์ผู้ใช้ เช่น "Claude Opus 5"
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([isActive, sortOrder])
+}
+
 model Conversation {
   id        Int       @id @default(autoincrement())
   userId    Int

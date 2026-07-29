@@ -9,7 +9,9 @@ import type { JwtPayload } from "../types/auth";
 export const conversationRoutes = new Elysia({ prefix: "/api/conversations" })
   .use(authGuard)
   .get("/", conversationController.list)
-  .post("/", conversationController.create)
+  .post("/", conversationController.create, {
+    body: t.Optional(t.Object({ modelId: t.Optional(t.String()) })),
+  })
   .get("/:id", conversationController.get, {
     params: t.Object({ id: t.String() }),
   })

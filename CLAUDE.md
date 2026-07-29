@@ -713,13 +713,20 @@ Service throw error ภาษาไทยที่ user เข้าใจได
 > 1. **Embed/index ข้อมูลทั้งคลัง** ต้องทำแค่ครั้งเดียวตอน ingest (Phase 4.2 ทำไปแล้ว ไม่เกี่ยวกับตอนตอบคำถามเลย) ไม่ใช่สิ่งที่เกิดซ้ำทุกครั้งที่มีคนถามคำถาม — ส่วนนี้ไม่มีอะไรต้องแก้
 > 2. **Query ตอนค้นหาคำตอบ (retrieval)** เกิดขึ้นจริง 1 ครั้ง/คำถาม แต่ตัวที่ทำให้ "ช้า" ไม่ใช่เพราะ "อ่านซ้ำ" — เป็นเพราะ**ไม่มี index ที่เหมาะสม** ทำให้ Postgres ต้อง scan ทั้งตารางทุกครั้ง ถ้าใส่ GIN index (full-text) ให้ถูกต้อง query จะเร็วระดับ **มิลลิวินาที** ไม่ว่าคลังจะมีกี่พันมาตราก็ตาม — เร็วกว่าเวลาที่โมเดล LLM ใช้ตอบ (หลักวินาที) หลายพันเท่าอยู่แล้ว **ไม่จำเป็นต้องมี Redis สำหรับปัญหานี้** Redis จะช่วยได้จริงเฉพาะกรณี cache คำตอบของคำถามที่ "เหมือนเดิมทุกตัวอักษร" ซ้ำๆ (hit rate ต่ำสำหรับ chat ที่คำถามหลากหลาย) — ใส่เป็น stretch goal ไว้ท้าย task ไม่ใช่ requirement ของรอบนี้
 
-- [ ] 5.1 DB + API: เลือกโมเดล AI เองได้ (ใช้ร่วมกันทั้งแชททั่วไปและแชทกฎหมาย)
-  - เพิ่ม model `AiModel`: `id`, `modelId` (OpenRouter model id string, `@unique`, เช่น `"anthropic/claude-opus-5"`), `label` (ชื่อโชว์ผู้ใช้ เช่น `"Claude Opus 5"`), `isActive Boolean @default(true)`, `sortOrder Int @default(0)`
-  - seed: ใส่โมเดลตัวอย่างอย่างน้อย 2-3 ตัว (ต้องเป็น model id ที่ใช้งานได้จริงบน OpenRouter — ตัวที่ตั้งใน `OPENROUTER_MODEL` ปัจจุบันต้องอยู่ในลิสต์ด้วยเสมอ กัน conversation เก่าที่ผูก modelTier ตัวนี้ไว้แล้วหา label โชว์ไม่เจอ)
-  - `GET /api/ai-models` — authGuard เท่านั้น, คืนเฉพาะ `isActive=true` เรียงตาม `sortOrder` — endpoint เดียวใช้ทั้งสองแชท ไม่ต้องแยก
-  - แก้ `conversationService.create`/`POST /api/conversations` (Phase 3.1) ให้รับ `modelId?: string` เพิ่ม (optional field, ไม่ breaking ของเดิม) — **ต้อง validate ว่าอยู่ใน `AiModel` ที่ `isActive=true` เท่านั้นก่อนใช้** (กัน client ส่ง string มั่วๆ ตรงเข้า OpenRouter) ไม่ส่งมา → fallback เป็น `env.OPENROUTER_MODEL` เหมือนเดิมทุกอย่าง (พฤติกรรมเดิมไม่เปลี่ยนถ้า client ไม่ส่ง `modelId`)
-  - โมเดลผูกกับ `Conversation` ตอนสร้างครั้งเดียว (schema เดิมมี `modelTier` เป็น per-conversation ไม่ใช่ per-message อยู่แล้ว) — หมายความว่า **เลือกโมเดลได้ตอนเริ่มบทสนทนาใหม่เท่านั้น เปลี่ยนกลางคันไม่ได้ในรอบนี้** (ถ้าต้องการเปลี่ยนโมเดลกลางบทสนทนาเป็น task แยกที่ซับซ้อนกว่านี้ ไม่ทำตอนนี้)
+- [x] 5.1 DB + API: เลือกโมเดล AI เองได้ (ใช้ร่วมกันทั้งแชททั่วไปและแชทกฎหมาย)
+  - เพิ่ม model `AiModel`: `id`, `modelId` (OpenRouter model id string, `@unique`), `label`, `isActive Boolean @default(true)`, `sortOrder Int @default(0)` — migration `20260729165722_add_ai_model`
+  - seed: `anthropic/claude-opus-5`, `anthropic/claude-sonnet-5`, `deepseek/deepseek-v4-flash` (ตัวที่ตั้งใน `OPENROUTER_MODEL` ปัจจุบันอยู่ในลิสต์ด้วย)
+  - `GET /api/ai-models` (`aiModelRepository`/`aiModelService`/`aiModelController`/`routes/aiModels.ts`) — authGuard เท่านั้น, คืนเฉพาะ `isActive=true` เรียงตาม `sortOrder`, response แค่ `{modelId, label}` — endpoint เดียวใช้ทั้งสองแชท
+  - แก้ `conversationService.create`/`POST /api/conversations` ให้รับ `modelId?: string` เพิ่ม — validate กับ `AiModel.isActive=true` ก่อนเสมอ (กัน client ส่ง string มั่วๆ ตรงเข้า OpenRouter) ไม่ผ่าน → 400 `HttpError`, ไม่ส่งมา → fallback `env.OPENROUTER_MODEL` เหมือนเดิม
+  - โมเดลผูกกับ `Conversation` ตอนสร้างครั้งเดียว (per-conversation ไม่ใช่ per-message) — เลือกโมเดลได้ตอนเริ่มบทสนทนาใหม่เท่านั้น เปลี่ยนกลางคันไม่ได้ในรอบนี้
   - แชทกฎหมาย (5.5) ใช้ mechanism เดียวกันเป๊ะ เพราะยังเป็น `Conversation.modelTier` field เดิม ไม่ต้องเขียนแยก
+
+  - [x] FIX #13: เพิ่ม `body: t.Object({ modelId: t.Optional(t.String()) })` ให้ `POST /api/conversations` ตอนแรก — ทำให้ test เดิมที่ยิง POST โดย**ไม่ส่ง body เลย** (ตาม behavior เดิมของแชททั่วไปที่ frontend เรียก `chatApi.create()` เปล่าๆ) fail ด้วย 400 ทั้งที่ทุก field เป็น `t.Optional` อยู่แล้ว — Elysia's TypeBox validation ปฏิเสธ body ที่หายไปทั้งก้อน (ไม่ใช่แค่ field ข้างในที่ optional) ถ้า schema เป็น `t.Object(...)` ตรงๆ | before: `body: t.Object({ modelId: t.Optional(...) })` → after: `body: t.Optional(t.Object({ modelId: t.Optional(...) }))` (ห่อ optional อีกชั้นที่ตัว object เอง) พร้อมแก้ controller ให้รับ `body?: {...}` แทน `body: {...}`
+    - 🧪 test: `bun test` → จาก 7 fail (ทุก test ที่พึ่ง `conversationId` จาก create ที่พัง) กลับมา 45 pass 0 fail ✅
+    - 📝 commit: `fix(api): allow POST /api/conversations without a body again`
+
+  - 🧪 test: `apps/api/tests/aiModels.test.ts` (2 pass) + เพิ่มเคสใน `conversations.test.ts` (create ด้วย valid modelId ใช้โมเดลนั้นจริง, create ด้วย modelId ปลอม → 400) → `bun test` รวม 45 pass ✅ | live curl ผ่าน `docker compose` จริง — list เห็น 3 โมเดล, create ไม่ส่ง body ได้โมเดล default, create ส่ง `modelId` ถูกต้องได้โมเดลนั้นจริง, ส่ง `modelId` ปลอม → 400 ✅
+  - 📝 commit: `feat(api): let users pick an ai model, backed by an AiModel table`
 
 - [ ] 5.2 Web: model picker (ใช้ component เดียวกันทั้งสองแชท)
   - `modules/chat/services/modelApi.ts` — `GET /api/ai-models`
