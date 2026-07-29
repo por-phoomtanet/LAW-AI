@@ -24,4 +24,13 @@ export const chatApi = {
   async remove(id: number): Promise<void> {
     await api.delete(`/api/conversations/${id}`);
   },
+
+  // เปลี่ยนโมเดลได้ตลอดแม้แชทไปแล้ว — มีผลกับข้อความถัดไปเท่านั้น
+  async updateModel(id: number, modelId: string): Promise<ConversationSummary> {
+    const response = await api.patch<ApiResponse<ConversationSummary>>(
+      `/api/conversations/${id}/model`,
+      { modelId },
+    );
+    return response.data.data;
+  },
 };

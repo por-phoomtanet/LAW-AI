@@ -138,6 +138,38 @@ describe("Conversation CRUD (Phase 3.1)", () => {
     expect(response.status).toBe(404);
   });
 
+  test("owner can change the model of an existing conversation mid-chat", async () => {
+    const model = await prisma.aiModel.findFirstOrThrow({ where: { isActive: true } });
+    const response = await authedRequest(`/api/conversations/${conversationId}/model`, ownerToken, {
+      method: "PATCH",
+      body: JSON.stringify({ modelId: model.modelId }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.modelTier).toBe(model.modelId);
+
+    const record = await prisma.conversation.findUnique({ where: { id: conversationId } });
+    expect(record?.modelTier).toBe(model.modelId);
+  });
+
+  test("changing to an invalid/inactive modelId → 400", async () => {
+    const response = await authedRequest(`/api/conversations/${conversationId}/model`, ownerToken, {
+      method: "PATCH",
+      body: JSON.stringify({ modelId: "not-a-real-model/does-not-exist" }),
+    });
+    expect(response.status).toBe(400);
+  });
+
+  test("other user cannot change the model of someone else's conversation → 404", async () => {
+    const model = await prisma.aiModel.findFirstOrThrow({ where: { isActive: true } });
+    const response = await authedRequest(`/api/conversations/${conversationId}/model`, otherToken, {
+      method: "PATCH",
+      body: JSON.stringify({ modelId: model.modelId }),
+    });
+    expect(response.status).toBe(404);
+  });
+
   test("owner deletes conversation (soft delete)", async () => {
     const response = await authedRequest(`/api/conversations/${conversationId}`, ownerToken, {
       method: "DELETE",

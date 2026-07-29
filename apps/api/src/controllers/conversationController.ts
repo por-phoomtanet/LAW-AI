@@ -49,4 +49,21 @@ export const conversationController = {
     await conversationService.remove(Number(params.id), user.userId);
     return { data: { id: Number(params.id) } };
   },
+
+  async updateModel({
+    params,
+    body,
+    user,
+  }: {
+    params: { id: string };
+    body: { modelId: string };
+    user: JwtPayload;
+  }) {
+    const conversation = await conversationService.updateModel(
+      Number(params.id),
+      user.userId,
+      body.modelId,
+    );
+    return { data: toSummary(conversation) };
+  },
 };

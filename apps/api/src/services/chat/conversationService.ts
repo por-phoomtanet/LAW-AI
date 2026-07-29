@@ -39,4 +39,17 @@ export const conversationService = {
     }
     await conversationRepository.softDelete(id);
   },
+
+  // เปลี่ยนโมเดลได้ตลอดแม้แชทไปแล้ว — validate ownership + modelId active เหมือน create()
+  async updateModel(id: number, userId: number, modelId: string) {
+    const conversation = await conversationRepository.findByIdForUser(id, userId);
+    if (!conversation) {
+      throw new NotFoundError("ไม่พบบทสนทนา");
+    }
+    const model = await aiModelRepository.findActiveByModelId(modelId);
+    if (!model) {
+      throw new HttpError(400, "โมเดลที่เลือกไม่พร้อมใช้งาน");
+    }
+    return conversationRepository.updateModel(id, model.modelId);
+  },
 };

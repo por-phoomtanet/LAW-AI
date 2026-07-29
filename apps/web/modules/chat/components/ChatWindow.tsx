@@ -55,6 +55,18 @@ export default function ChatWindow() {
     setDrawerOpen(false);
   }
 
+  // เปลี่ยนโมเดลได้ตลอดแม้แชทไปแล้ว — ถ้ายังไม่มีบทสนทนาก็แค่เก็บ state ไว้ใช้ตอนสร้าง (ค่า null
+  // แปลว่า "ใช้ค่าเริ่มต้น") ถ้ามีบทสนทนาอยู่แล้ว เรียก PATCH ทันที (มีผลกับข้อความถัดไปเท่านั้น)
+  async function handleModelChange(modelId: string | null) {
+    if (activeConversationId == null) {
+      setSelectedModelId(modelId);
+      return;
+    }
+    if (!modelId) return;
+    const updated = await chatApi.updateModel(activeConversationId, modelId);
+    upsertConversation(updated);
+  }
+
   async function handleSend(content: string) {
     let conversationId = activeConversationId;
     // ยังไม่มีบทสนทนาที่เลือกอยู่ (ข้อความแรกสุด) → สร้าง conversation ก่อน แล้วค่อยส่ง path เดียวกับข้อความถัดๆ ไป
@@ -126,11 +138,15 @@ export default function ChatWindow() {
         <div className="mb-1 flex items-center justify-between md:mb-2">
           <h1 className="text-lg font-medium text-gray-100">แชท</h1>
           <div className="flex items-center gap-2">
-            {/* เลือกโมเดลได้แค่ตอนยังไม่มีบทสนทนา (ยังไม่ส่งข้อความแรก) — หลังสร้างแล้ว
-                modelTier ผูกกับ conversation ถาวร เปลี่ยนกลางคันไม่ได้ (ดู Phase 5.1) */}
-            {activeConversationId == null && (
-              <ModelSelect value={selectedModelId} onChange={setSelectedModelId} />
-            )}
+            <ModelSelect
+              value={
+                activeConversationId == null
+                  ? selectedModelId
+                  : (conversations.find((c) => c.id === activeConversationId)?.modelTier ?? null)
+              }
+              onChange={handleModelChange}
+              allowClear={activeConversationId == null}
+            />
             <button
               type="button"
               onClick={() => setDrawerOpen(true)}

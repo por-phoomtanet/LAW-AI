@@ -25,6 +25,11 @@ export const conversationRoutes = new Elysia({ prefix: "/api/conversations" })
   .delete("/:id", conversationController.remove, {
     params: t.Object({ id: t.String() }),
   })
+  // เปลี่ยนโมเดลได้ตลอดแม้แชทไปแล้ว ไม่ใช่แค่ตอนสร้างบทสนทนาใหม่เท่านั้น (แก้ข้อจำกัดเดิมใน Phase 5.1)
+  .patch("/:id/model", conversationController.updateModel, {
+    params: t.Object({ id: t.String() }),
+    body: t.Object({ modelId: t.String({ minLength: 1 }) }),
+  })
   .post(
     "/:id/messages",
     // reuse /api/conversations/:id/messages เดิม แล้ว branch ตาม conversation.mode แทน

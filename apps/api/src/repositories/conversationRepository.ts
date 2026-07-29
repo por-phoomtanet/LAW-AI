@@ -34,6 +34,12 @@ export const conversationRepository = {
     return prisma.conversation.update({ where: { id }, data: { deletedAt: new Date() } });
   },
 
+  // เปลี่ยนโมเดลได้ตลอดแม้แชทไปแล้ว (ยกเลิกข้อจำกัดเดิมที่ผูกโมเดลไว้แค่ตอนสร้างครั้งเดียว)
+  // มีผลกับข้อความถัดไปเท่านั้น — ข้อความเก่าที่ persist แล้วยังเก็บ modelUsed ของตัวเองไว้ตามจริง
+  updateModel(id: number, modelTier: string) {
+    return prisma.conversation.update({ where: { id }, data: { modelTier } });
+  },
+
   appendMessage(data: {
     conversationId: number;
     role: "user" | "assistant";
