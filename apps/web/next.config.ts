@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   eslint: {
     // Next.js's built-in build-time lint step expects .eslintrc-style config and
     // breaks against our flat config (eslint.config.mjs) — lint via `bun run lint`
