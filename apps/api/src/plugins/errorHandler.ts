@@ -15,6 +15,7 @@ export const errorHandler = new Elysia().onError({ as: "global" }, ({ code, erro
     set.status = error.status;
     return { error: error.message };
   }
+  console.error("[errorHandler] unexpected error:", error);
   set.status = 500;
   return { error: "Internal server error" };
 });
