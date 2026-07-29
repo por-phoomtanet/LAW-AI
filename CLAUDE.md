@@ -588,106 +588,75 @@ Service throw error ภาษาไทยที่ user เข้าใจได
 
 ---
 
-### Phase 3 — RAG Pipeline & Ingestion
+### Phase 3 — General-Purpose Chat (NotebookLM-style UI)
 
-- [ ] 3.1 ตั้งค่า OpenAI Embeddings client + ทดสอบ embed ข้อความตัวอย่าง
-  - 🧪 test: embed ข้อความ 1 ประโยค → ได้ vector 1536 มิติ (text-embedding-3-small)
-  - 📝 commit: `feat(api): openai embeddings client`
+> หมายเหตุ: Phase นี้เป็นการตัดสินใจใหม่ของผู้ใช้ — เริ่ม demo ใหม่จาก `main` เดิม (ไม่เอา RAG/citation grounding ที่เคยทำไว้บน branch `chore/trim-schema-phase-1-2` ซึ่งยังอยู่ครบบน branch นั้น ไม่ได้ merge เข้ามา) เป้าหมาย Phase นี้คือ chat ทั่วไป (ไม่บังคับ grounding/citation) แบบ NotebookLM แต่เริ่มจากแค่ช่องแชท + เก็บประวัติการสนทนาก่อน ใช้ตาราง `Conversation`/`Message` ที่มีอยู่แล้วใน schema โดยไม่ต้อง migrate
 
-- [ ] 3.2 Ingestion script: ดาวน์โหลด + parse `open-law-data-thailand/ocs-krisdika` (HuggingFace) + hash dedupe
-  - หมายเหตุ: map field ตามตารางใน § AI/RAG Architecture ข้อ 6 — `sections[]` แบ่งมาตรามาให้แล้ว ไม่ต้องเขียน logic แยกมาตราเอง
-  - 🧪 test: ingest เดือนตัวอย่าง 1 ไฟล์ → ได้ `LegalDocument`+`DocumentChunk` ตรงจำนวนมาตรา, รันซ้ำไม่สร้าง chunk ซ้ำ (`contentHash`), `isActive` ตรงกับ `is_latest`
-  - 📝 commit: `feat(ingestion): ingest ocs-krisdika dataset`
+- [x] 3.1 API: Conversation CRUD
+  - `repositories/conversationRepository.ts` — query ที่ scope ด้วย `userId`: `findManyByUser`, `findByIdForUser` (เช็ค ownership, คืน null ถ้าไม่ใช่เจ้าของ), `create`, `softDelete`, `appendMessage`, `setTitleIfEmpty`, `touchUpdatedAt` (Message เป็นคนละ table กับ Conversation — updatedAt ไม่ auto-bump ต้อง touch เองให้ list เรียงตามคุยล่าสุดถูก)
+  - `services/chat/conversationService.ts` — `list`/`create` (ตั้ง `modelTier: env.OPENROUTER_MODEL` เอง ไม่พึ่ง default ของ Prisma column ตาม Dev Standard #1)/`getWithMessages` (throw `NotFoundError` ถ้าไม่ใช่เจ้าของ)/`remove` (soft delete)
+  - `controllers/conversationController.ts` + `routes/conversations.ts` (`prefix: "/api/conversations"`, `.use(authGuard)` เท่านั้น — **ไม่ใส่ `requirePermission`** เพราะ chat เปิดให้ทุก role ที่ login แล้วตาม Dev Standard #11 และ permission row ของ `chat` ที่ seed ไว้มีแค่ `canView`)
+  - wire เข้า `apps/api/src/app.ts`
 
-- [ ] 3.3 Ingestion script: ดาวน์โหลด + chunk `open-law-data-thailand/soc-ratchakitcha` (เฉพาะช่วง/หมวดที่กำหนด — ห้ามดึงทั้ง 192GB)
-  - หมายเหตุ: เนื้อหาเป็น OCR text ดิบ ต้องเขียน logic แยกหน่วยเอง (ต่างจาก ocs-krisdika ที่ chunk มาให้แล้ว)
-  - 🧪 test: ingest metadata + OCR text ของช่วงที่กำหนด → ได้ `LegalDocument`+`DocumentChunk` ตาม field mapping
-  - 📝 commit: `feat(ingestion): ingest soc-ratchakitcha dataset (scoped range)`
+  - [x] FIX #5: Postgres volume ยังมี schema/ข้อมูลของ branch `chore/trim-schema-phase-1-2` ค้างอยู่ทั้งหมด (`Document`/`Passage`/`Workspace`/`ResearchSession`/role 5 แบบ `org_admin` ฯลฯ) ไม่มี table ของ `main` เลย (`Conversation`/`Message`/`LegalDocument`/`DocumentChunk`) เพราะ container Postgres รันข้ามการสลับ branch มาตลอดไม่เคย reset — `prisma migrate status` รายงาน "up to date" หลอกๆ เพราะเช็คแค่ชื่อ migration ใน `_prisma_migrations` ไม่ได้ diff โครงสร้างจริง ทำให้ test แรกที่ query role "subscriber" fail (ไม่มีอยู่จริงในข้อมูลที่ค้าง) | before: seed 5-role เดิมค้างอยู่ → after: ขอ consent ผู้ใช้ก่อน (`AskUserQuestion`) แล้ว `prisma migrate reset --force` (local dev DB เท่านั้น, ผ่าน Prisma's built-in AI-agent consent guard ด้วย `PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION`)
+    - 🧪 test: `\dt` หลัง reset → เหลือแค่ 8 table ตรงกับ `main`'s schema.prisma ✅ | `bun test` (api ทั้งหมด) → 32 pass 0 fail ✅
+    - 📝 commit: `fix(db): reset dev postgres volume to match main schema after branch switch`
 
-- [ ] 3.4 pgvector similarity search service (top-K + metadata filter)
-  - 🧪 test: query ตัวอย่าง → คืน chunk ที่เกี่ยวข้องเรียงตาม similarity
-  - 📝 commit: `feat(api): pgvector similarity search`
+  - 🧪 test: `bun test tests/conversations.test.ts` → 8 pass (401 ไม่มี token, create ใช้ `OPENROUTER_MODEL` จาก env, list เห็นแค่ของตัวเอง, get/delete คนอื่น → 404 ไม่ leak, soft delete ตั้ง `deletedAt` จริง) ✅
+  - 📝 commit: `feat(api): conversation crud scoped by owner`
 
-- [ ] 3.5 API: `POST /api/admin/documents/ingest` (trigger ingestion)
-  - 🧪 test: admin เรียก → เอกสารใหม่ปรากฏใน DB พร้อม chunk+embedding
-  - 📝 commit: `feat(api): document ingestion endpoint`
+- [x] 3.2 API: Streaming chat completion (SSE, general-purpose — ไม่มี RAG)
+  - `services/chat/chatCompletionService.ts`: persist user message ที่ส่งเข้ามาก่อน → ประกอบ `messages` array (system prompt แบบ general assistant คงที่ — ตั้งใจ**ไม่ใช้**ระบบ prompt แบบ RAG-grounded จาก § AI/RAG Architecture ข้อ 3 รอบนี้ ไม่บังคับ citation) + ประวัติเดิม → เรียก `openrouter.chat.completions.create({ model: conversation.modelTier, messages, stream: true })` → คืน raw `Response`/`ReadableStream` forward `choices[0].delta.content` เป็น SSE (ตาม pattern § AI/RAG Architecture ข้อ 4 — ยืนยันแล้วว่า Elysia ส่ง raw `Response` ผ่านได้จริงจาก curl -N สด) → เมื่อ stream จบ persist assistant `Message` (`modelUsed` = model id จริงจาก response), ตั้ง `title` จาก user message ถ้ายังว่าง
+  - handle finish_reason ที่ไม่ใช่ `"stop"` ตาม Dev Standard #13 (แปลเป็นข้อความไทย ไม่โชว์ raw provider error)
+  - route `POST /api/conversations/:id/messages`, `body: t.Object({ content: t.String({ minLength: 1 }) })`
+  - mock `openrouterClient` ใน `tests/chatCompletion.test.ts` ด้วย dynamic `await import("../src/app")` ใน `beforeAll` แทน static top-level import — เพราะ static import จะ hoist ขึ้นก่อน `mock.module()` ทำให้โหลด client ตัวจริงไปแล้วก่อน mock มีผล (ตาม pattern ที่ `tests/clients/openrouterClient.test.ts` วางไว้ตั้งแต่ Phase 1) — ห้ามเรียก API จริงใน `bun test`
 
-- [ ] 3.6 Web: แสดง attribution "ข้อมูลจาก Open Law Data Thailand (CC-BY-4.0)" ที่ footer
-  - 🧪 test: ทุกหน้ามี attribution แสดงตาม license requirement
-  - 📝 commit: `feat(web): add data source attribution footer`
+  - [x] FIX #6: ตั้งใจตั้ง `title` เฉพาะตอน `isFirstMessage` (คำนวณจาก `conversation.messages.length === 0` ก่อน persist) — ถ้ารอบแรกสุด persist user message สำเร็จแต่ assistant reply ไม่เสร็จ (error/timeout) รอบถัดไปจะไม่ถูกนับเป็น "first" อีกต่อไป (เพราะมี user message ค้างจากรอบก่อนอยู่แล้ว) ทำให้ title ไม่ถูกตั้งค่าตลอดไป แม้บทสนทนาจะตอบสำเร็จจริงในรอบหลังๆ ก็ตาม | เจอจริงจากการยิง curl สดตรง — รอบแรกไม่มี assistant message ถูก persist (เหตุผล: ข้อความ Thai ที่พิมพ์ผ่าน bash argument บน Windows เพี้ยน encoding ทำให้ debug ช้าไปพักหนึ่ง) รอบสองตอบสำเร็จแต่ title ยังว่าง | before: `if (isFirstMessage) await setTitleIfEmpty(...)` → after: เรียก `setTitleIfEmpty` ทุกครั้งหลัง assistant ตอบสำเร็จแบบไม่มีเงื่อนไข (ฟังก์ชันเช็ค `title: null` เองอยู่แล้วจึง idempotent)
+    - 🧪 test: `bun test` (36 pass) ✅ | live curl ผ่าน `docker compose` จริง — สร้างบทสนทนาใหม่ ถามคำถาม ได้ title ตรงกับคำถามจริง ✅
+    - 📝 commit: `fix(api): always attempt conversation title on successful reply, not just first message`
 
-- [ ] 3.7 Auto test: ครอบคลุม ingestion dedupe + retrieval ranking
-  - 🧪 test: `bun test` → ผ่านทั้งหมด
-  - 📝 commit: `test(api): rag pipeline tests`
+  - 🧪 test: `bun test tests/chatCompletion.test.ts` → 4 pass (401 ไม่มี token, ส่งข้อความ → SSE delta ต่อกันได้ข้อความเต็มถูกต้อง + persist ทั้ง user/assistant message + ตั้ง title, finish_reason ไม่ใช่ stop → error event ภาษาไทย + assistant message ไม่ถูก persist, คนอื่นส่งเข้าบทสนทนาที่ไม่ใช่ของตัวเอง → 404) ✅ | full suite 36 pass ไม่มี mock leak ข้าม test file ✅
+  - 📝 commit: `feat(api): streaming chat completion with sse`
 
----
+- [x] 3.3 Web: chat state + API client module
+  - `store/chatStore.ts` (Zustand, ไม่ persist — DB เป็น source of truth เพื่อเลี่ยงบั๊ก stale-localStorage-JWT แบบที่เคยเจอ): `conversations[]`, `activeConversationId`, `messages[]`, `streamingBuffer`
+  - `modules/chat/types.ts`, `modules/chat/services/chatApi.ts` (list/create/get/delete ผ่าน `api` axios instance เดิม)
+  - `modules/chat/hooks/useChatStream.ts` — ถือ `fetch` + ใส่ `Authorization` header เอง + `ReadableStream` reader สำหรับ `POST /:id/messages` ตาม Dev Standard #10 (hook เดียว ไม่ให้ component เรียก stream เอง) — error event จาก backend (finish_reason ไม่ใช่ stop) จะ reset streaming buffer แทนการ commit เข้า message list เพื่อให้ตรงกับฝั่ง backend ที่ไม่ persist ข้อความ assistant ที่ไม่สมบูรณ์
+  - 🧪 test: type-check ผ่านใน `bun run build` (web) ✅ — ไม่มี test แยกเฉพาะ layer นี้ เพราะไม่มี logic ที่ซับซ้อนพอจะแยกเทส (เทสร่วมกับ 3.4 ด้านล่าง)
+  - 📝 commit: `feat(web): chat store and api client module`
 
-### Phase 4 — AI Chat with Citations
+- [x] 3.4 Web: ChatWindow two-pane UI
+  - `modules/chat/components/ChatWindow.tsx` — ซ้าย: รายการบทสนทนา + ปุ่ม "+ บทสนทนาใหม่" (เปลี่ยนเป็น Drawer บน mobile ตาม Dev Standard #12 ผ่าน `md:hidden`/`hidden md:flex`), ขวา: thread ที่เลือกอยู่ — ใช้ route เดิม (`/`, `ROUTES.chat`) สลับบทสนทนาด้วย client-side state รอบนี้ยังไม่เพิ่ม route ใหม่
+  - `ConversationList.tsx`, `MessageThread.tsx` + `MessageBubble.tsx`, `ChatInput.tsx` (input sticky bottom, ส่งข้อความตอนยังไม่มี `activeConversationId` จะสร้าง conversation ก่อนแล้วค่อยส่ง — path เดียวกับข้อความถัดๆ ไป)
+  - แทนที่การใช้ `HomeContent` ใน `app/(dashboard)/page.tsx` แล้วลบ `HomeContent.tsx` ทิ้ง
+  - ไม่เพิ่ม `@ant-design/icons` เป็น dependency ใหม่ — ใช้ข้อความ/emoji แทนไอคอนในปุ่ม (เช่น "+ บทสนทนาใหม่", "☰ บทสนทนา") เพื่อไม่ขยาย scope เกินที่ plan กำหนด
 
-- [ ] 4.1 API: `POST /api/conversations` + `GET /api/conversations`
-  - 🧪 test: สร้าง/list บทสนทนาได้ตาม user ที่ login
-  - 📝 commit: `feat(api): conversations crud`
+  - [x] FIX #7: local `bun run build` (web) พัง EPERM ตอน copy traced files เข้า `.next/standalone` เพราะสร้าง symlink บน Windows ต้องมีสิทธิ์ admin/เปิด Developer Mode — เพิ่งเกิดหลัง Docker fix ก่อนหน้าเพิ่ม `output: "standalone"` เข้า `next.config.ts` (คนละสาเหตุกับ FIX เดิมเรื่อง `.next/trace` lock จาก `bun run dev` ค้าง) | ยืนยันแล้วว่า type-check + page generation ผ่านหมดก่อนเจอ error (ไม่ใช่บั๊กโค้ด) และ Docker build (Linux container) ไม่เจอปัญหานี้เลยเพราะไม่ต้องสร้าง symlink ข้าม filesystem แบบ Windows | ไม่แก้ตรงนี้เพราะไม่กระทบ deployment path จริง (Docker) — ผู้ใช้ที่ build บน Windows local ต้องเปิด Developer Mode หรือรัน terminal แบบ admin ถ้าต้องการให้ `bun run build` ผ่านสมบูรณ์นอก Docker
+    - 🧪 test: `docker compose up -d --build web` → build สำเร็จ, container healthy, `curl http://127.0.0.1:3002/` → 200 พร้อม `<title>LAW-AI — ผู้ช่วยกฎหมายไทย AI</title>` ✅
+    - 📝 commit: `docs: note windows standalone-build symlink limitation`
 
-- [ ] 4.2 API: chat orchestration service — retrieve → build prompt (system + numbered chunks) → call OpenRouter → parse+validate citations
-  - หมายเหตุ: system prompt บังคับให้อ้างอิงเลข `[n]` ทุกครั้ง, backend validate ทุกเลขกับ chunk ที่ retrieve จริง (ดู § AI/RAG Architecture ข้อ 3)
-  - 🧪 test: ถามคำถามตัวอย่าง → ได้คำตอบพร้อม citation ที่ validate แล้วตรงกับ chunk ที่ retrieve มา, เลขปลอม/เกินขอบเขตถูกตัดทิ้ง
-  - 📝 commit: `feat(api): rag chat orchestration with validated citations`
+  - 🧪 test: `docker compose up -d --build` (api+web) → ทั้งสอง container healthy ✅ | curl `/api/health` → connected ✅ | curl `/` (web) → 200 ✅ | **ยังไม่ยืนยันด้วย browser จริง** (ไม่มี browser tool ใน environment นี้) — การคลิก/พิมพ์/เห็น token streaming สดในหน้าจอจริงยังไม่ได้ทดสอบ มีแค่ API layer ที่ยืนยันสดผ่าน curl -N แล้วว่า stream ทำงานถูกต้อง (ดู 3.2)
+  - 📝 commit: `feat(web): notebooklm-style chat window with conversation history`
 
-- [ ] 4.3 API: SSE streaming endpoint `POST /api/conversations/:id/messages`
-  - 🧪 test: เปิด connection → ได้ text delta ทยอยมาจาก OpenRouter (`stream: true`), ปิด stream เมื่อจบ, citations แนบท้ายหลัง validate
-  - 📝 commit: `feat(api): sse streaming chat endpoint`
+  - [x] FIX #8: ผู้ใช้ส่งภาพหน้าจอ NotebookLM จริง (โทนมืด) ขอให้ปรับสีให้ตรง — restyle เฉพาะ chat panel (`ChatWindow` และลูก) ไม่แตะ Sidebar/dashboard chrome ที่เหลือซึ่งยังเป็น antd light theme เดิม เพราะภาพที่ให้มาคือแค่ส่วน chat ไม่ใช่ทั้งแอป | เปลี่ยน `MessageBubble` เป็น pill สีเทาเข้ม (`#333537`) สำหรับ user, plain text ไม่มีกรอบสำหรับ assistant | เปลี่ยน `ChatInput` จาก antd `Input.TextArea`/`Button` เป็น plain `<textarea>`/`<button>` เพราะต้องคุมสีพื้น/ขอบเองทั้งหมดให้ตรงภาพ (pill โค้งมน border ขาวจางๆ บนพื้นเข้ม ปุ่มส่งวงกลม) — antd theme default คุมสีเหล่านี้ยาก | `ChatWindow` ครอบด้วย `bg-[#131314] rounded-2xl` ทำให้เป็น "การ์ดมืด" ลอยอยู่ใน dashboard content area ที่ยังสว่างอยู่ | Drawer (mobile) ใช้ antd `styles` prop (v5.4+) override header/body/mask background แทนการเขียน CSS class ทับ
+    - 🧪 test: `docker compose up -d --build web` → build ผ่าน, container ready ✅ | `docker compose logs web` → ไม่มี runtime error ✅ | ข้อมูลใน postgres volume ยังอยู่ครบหลัง rebuild (`Role` 3 แถวเดิม) ✅ | **สีจริงบนหน้าจอยังไม่ยืนยันด้วย browser จริง** เช่นเดิม
+    - 📝 commit: `style(web): notebooklm dark theme for chat panel`
 
-- [ ] 4.4 API: อ่าน `OPENROUTER_MODEL` จาก env + รองรับ override ต่อ conversation (`Conversation.modelTier` เก็บ model id ตรงๆ)
-  - 🧪 test: ไม่ส่ง modelTier → ใช้ `OPENROUTER_MODEL` default | ส่ง model id อื่นที่ config ไว้ → เรียกโมเดลนั้นจริง (ตรวจจาก mock call args)
-  - 📝 commit: `feat(api): configurable openrouter model selection`
+  - [x] FIX #9: ผู้ใช้ส่งภาพจริงจาก browser มา — Sidebar (`shared/layouts/Sidebar.tsx`) ยังเป็นสองโทนปนกัน (บนขาว ล่างน้ำเงินเข้ม) เพราะ antd `Menu` default `theme="light"` (พื้นขาว) แต่ `Layout.Sider` ที่ห่ออยู่มี default background เป็นน้ำเงินเข้ม (`#001529`) ของ antd เอง — ไม่ใช่สีเดียวกับ chat panel (`#131314`) เลย | before: ไม่ได้ตั้ง `theme`/`style` ทั้งคู่ → after: `<Menu theme="dark" style={{background:"#131314"}}>` + `<Sider style={{background:"#131314"}}>` ให้ตรงกับโทน chat panel เป๊ะ
+    - 🧪 test: `docker compose up -d --build web` → build ผ่าน, container healthy ✅
+    - 📝 commit: `style(web): match sidebar background to chat panel dark tone`
 
-- [ ] 4.5 Web: `useChatStream` hook (fetch + ReadableStream)
-  - 🧪 test: ส่งคำถาม → เห็นข้อความ stream ทีละตัวอักษรใน UI
-  - 📝 commit: `feat(web): chat streaming hook`
+  - [x] FIX #10: หลังแก้ FIX #9 ยังเห็น "ขอบขาว" ล้อมรอบ chat panel อยู่ — สาเหตุจริงคือ `DashboardLayout`'s `<Content className="p-6">` ทำให้ `ChatWindow` (การ์ดมืดมี `rounded-2xl`) ถูก inset เข้าไป 24px ทุกด้าน เห็นพื้น Content (สีอ่อน) โผล่เป็นกรอบรอบการ์ด | ไม่แก้ที่ `Content` ตรงๆ เพราะหน้าอื่น (`/library` `/users` `/settings`) ยังต้องการ padding ปกติแบบ light theme เดิม อยู่ — แก้เฉพาะจุดที่ `ChatWindow` แทน: ใช้ `-m-6` (ยกเลิก `p-6` ของ parent เฉพาะหน้านี้) + เปลี่ยน `h-[calc(100vh-3rem)]` เป็น `h-screen` (เพราะไม่ได้พึ่ง padding ลด height อีกแล้ว) และตัด `rounded-2xl` ออกให้ชนขอบเต็มพื้นที่แบบ NotebookLM จริง แทนที่จะลอยเป็นการ์ด
+    - 🧪 test: `docker compose up -d --build web` → build ผ่าน, container healthy ✅
+    - 📝 commit: `style(web): make chat panel bleed full-bleed instead of inset card`
 
-- [ ] 4.6 Web: ChatWindow + MessageBubble + CitationCard
-  - 🧪 test: คำตอบแสดง citation เป็นการ์ดคลิกไปดูต้นฉบับได้
-  - 📝 commit: `feat(web): chat ui with citation cards`
-
-- [ ] 4.7 Web: เลือก model tier ต่อบทสนทนา (ModelTierSelect)
-  - 🧪 test: เปลี่ยน tier → คำถามถัดไปใช้ model ที่เลือก
-  - 📝 commit: `feat(web): model tier selector`
-
-- [ ] 4.8 Auto test: ครอบคลุม chat flow (retrieve, streaming, citation validation)
-  - 🧪 test: `bun test` → ผ่านทั้งหมด
-  - 📝 commit: `test(api): chat flow tests`
+  - [x] FIX #11: ผู้ใช้ส่งภาพตัวอย่างคำตอบที่จัด format สวย (heading, bullet, bold, code block มีปุ่ม copy) ขอปรับให้ตรงแนวนี้ — ก่อนหน้านี้ `MessageBubble` render `message.content` เป็น plain text ดิบทั้งหมด (`whitespace-pre-wrap`) ทำให้ markdown ที่โมเดลตอบมา (`#`, `**`, `-`, ` ``` `) โชว์เป็นสัญลักษณ์ดิบไม่ถูก render | เพิ่ม `react-markdown` + `remark-gfm` (dependency ใหม่ ยืนยันแล้วว่าไม่มี syntax highlighter ติดมาด้วย — ตั้งใจไม่เพิ่ม rehype-highlight เพื่อลด dependency footprint เพราะภาพตัวอย่างไม่มีสี syntax) สร้าง `modules/chat/components/MarkdownMessage.tsx` พร้อม custom `components` override ให้ตรงโทน dark theme เดิม (heading ตัวหนา, list เว้นระยะ, code block เป็นการ์ดมืดมีปุ่ม "คัดลอก" ผ่าน `navigator.clipboard`) — ใช้เฉพาะข้อความฝั่ง assistant เท่านั้น (ข้อความ user ยังเป็น plain text pill เหมือนเดิม เพราะเป็นแค่คำถามสั้นๆ)
+    - หมายเหตุทางเทคนิค: react-markdown v9+ เลิกส่ง prop `inline` ให้ `code` override แล้ว (breaking change จาก v8) — ใช้ heuristic แทน (มี `\n` หรือ `className` มี `language-` → ถือเป็น code block) แล้วให้ `pre` override เป็นแค่ passthrough (`<>{children}</>`) ไม่ห่อซ้ำ เพราะ `CodeBlock` component จัดการ wrapper การ์ดเองแล้ว
+    - 🧪 test: `docker compose up -d --build web` → build ผ่าน (type-check ผ่านทั้งไฟล์ใหม่) ✅ | live curl ผ่าน `docker compose` จริง ถามคำถามให้ตอบด้วย heading/bold/bullet/code block → persisted content มี markdown syntax ครบ (`#`, `**...**`, `- ...`, ` ```python `) ยืนยันว่าข้อมูลดิบพร้อมให้ frontend render ✅ | **การ render จริงบนหน้าจอ (สี/spacing/ปุ่ม copy ทำงาน) ยังไม่ยืนยันด้วย browser จริง**
+    - 📝 commit: `feat(web): render assistant messages as markdown with styled code blocks`
 
 ---
 
-### Phase 5 — Law Library (Browse & Admin)
-
-- [ ] 5.1 API: `GET /api/documents` (ค้นหา keyword + filter type) + `GET /api/documents/:id`
-  - 🧪 test: ค้นหาได้ตามชื่อ/citationCode, filter ตาม type
-  - 📝 commit: `feat(api): law library browse endpoints`
-
-- [ ] 5.2 Web: หน้ารายการเอกสารกฎหมาย (ค้นหา, filter, pagination)
-  - 🧪 test: แสดงรายการ, ค้นหาได้
-  - 📝 commit: `feat(web): law library list page`
-
-- [ ] 5.3 Web: หน้า admin ingest เอกสารใหม่ (upload/URL + trigger ingestion)
-  - 🧪 test: admin เพิ่มเอกสาร → ปรากฏใน library หลัง ingestion เสร็จ
-  - 📝 commit: `feat(web): admin document ingestion page`
-
----
-
-### Phase Last — Dashboard & Polish
-
-- [ ] L.1 Dashboard ผู้ดูแลระบบ (จำนวนบทสนทนา, cost/usage ต่อ model tier, เอกสารล่าสุด)
-  - 🧪 test: เปิด dashboard → เห็นข้อมูลสรุปถูกต้อง
-  - 📝 commit: `feat(web): admin dashboard`
-
-- [ ] L.2 Responsive design — chat + library ทุกหน้า
-  - 🧪 test: Chrome DevTools iPhone SE (375px) → ใช้งานได้ทุกหน้า
-  - 📝 commit: `feat(web): responsive layout`
-
-- [ ] L.3 รวม test suite ทั้งหมด
-  - 🧪 test: `bun test` root → ผ่านทุก test ใน monorepo
-  - 📝 commit: `chore: unified test suite`
 
 ---
 
@@ -696,8 +665,7 @@ Service throw error ภาษาไทยที่ user เข้าใจได
 
 1. เริ่ม Phase 1 ตามลำดับ — Phase 1-2 (Setup + Auth) เป็น boilerplate มาตรฐาน ปรับน้อย
 2. Phase 3-4 คือแกนหลักของระบบ (RAG + Chat) — อ่าน § AI / RAG Architecture ให้เข้าใจก่อนเริ่ม โดยเฉพาะกฎ citation grounding และ prompt caching placement
-3. ก่อนเขียนโค้ดเรียก OpenRouter ทุกครั้ง เช็ค model id (`OPENROUTER_MODEL`) และ feature ที่ provider นั้นรองรับจริงบน [openrouter.ai/docs](https://openrouter.ai/docs) — อย่าสมมติว่าทุกโมเดลรองรับ reasoning/structured output/caching เหมือนกันหมด
-4. Embeddings ใช้ OpenAI Embeddings API เสมอ (`EMBEDDING_MODEL`) — เรียกตรง ไม่ผ่าน OpenRouter เพราะ OpenRouter ไม่มี embeddings endpoint
+
 
 ## Key Decisions (บันทึกเหตุผลไว้กันลืม)
 
