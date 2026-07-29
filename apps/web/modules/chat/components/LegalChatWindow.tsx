@@ -9,13 +9,18 @@ import ConversationList from "./ConversationList";
 import MessageThread from "./MessageThread";
 import ChatInput from "./ChatInput";
 import ModelSelect from "./ModelSelect";
+import CitationPanel from "./CitationPanel";
 
-export default function ChatWindow() {
+// เกือบเหมือน ChatWindow.tsx (Phase 3.4) ทุกอย่าง — ต่างกันแค่ mode="legal" ตอนสร้างบทสนทนา,
+// filter conversation list เอาเฉพาะ mode="legal", และมีแผงอ้างอิงด้านขวา (CitationPanel)
+// ไม่แก้ ChatWindow.tsx เลยตามที่ตกลงไว้ใน Phase 5 — ไฟล์นี้เป็นของใหม่แยกต่างหาก
+export default function LegalChatWindow() {
   const [loadingList, setLoadingList] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const conversations = useChatStore((state) => state.conversations);
   const activeConversationId = useChatStore((state) => state.activeConversationId);
+  const messages = useChatStore((state) => state.messages);
   const setConversations = useChatStore((state) => state.setConversations);
   const upsertConversation = useChatStore((state) => state.upsertConversation);
   const setActiveConversation = useChatStore((state) => state.setActiveConversation);
@@ -24,16 +29,15 @@ export default function ChatWindow() {
   const isStreaming = useChatStore((state) => state.isStreaming);
   const { send, error } = useChatStream();
 
-  // chatStore เป็น global store เดียวใช้ร่วมกับแชทกฎหมาย (LegalChatWindow) — ต้อง filter
-  // เอาเฉพาะ mode="general" ไม่งั้นสลับหน้าไปมาจะเห็นบทสนทนาปนกัน และถ้า activeConversationId
-  // เดิมดันเป็นของแชทกฎหมาย (ค้างจากหน้าอื่น) ต้อง reset ทิ้งด้วย
+  // chatStore เป็น global store เดียวใช้ร่วมกับแชททั่วไป (ChatWindow) — filter เอาเฉพาะ
+  // mode="legal" ไม่งั้นสลับหน้าไปมาจะเห็นบทสนทนาปนกัน (ดูเหตุผลเดียวกันใน ChatWindow.tsx)
   useEffect(() => {
     chatApi
       .list()
       .then((all) => {
-        const general = all.filter((c) => c.mode === "general");
-        setConversations(general);
-        if (activeConversationId != null && !general.some((c) => c.id === activeConversationId)) {
+        const legal = all.filter((c) => c.mode === "legal");
+        setConversations(legal);
+        if (activeConversationId != null && !legal.some((c) => c.id === activeConversationId)) {
           setActiveConversation(null);
           setMessages([]);
         }
@@ -57,9 +61,8 @@ export default function ChatWindow() {
 
   async function handleSend(content: string) {
     let conversationId = activeConversationId;
-    // ยังไม่มีบทสนทนาที่เลือกอยู่ (ข้อความแรกสุด) → สร้าง conversation ก่อน แล้วค่อยส่ง path เดียวกับข้อความถัดๆ ไป
     if (!conversationId) {
-      const conversation = await chatApi.create(selectedModelId ?? undefined);
+      const conversation = await chatApi.create(selectedModelId ?? undefined, "legal");
       upsertConversation(conversation);
       setActiveConversation(conversation.id);
       conversationId = conversation.id;
@@ -78,6 +81,18 @@ export default function ChatWindow() {
       updatedAt: updated.updatedAt,
     });
   }
+
+  function handleCitationClick(index: number) {
+    document
+      .getElementById(`citation-${index}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  // แผงอ้างอิงโชว์ citations ของข้อความ assistant "ล่าสุด" ที่มี citations เท่านั้น
+  // (ไม่ใช่รวมทุกข้อความในบทสนทนา — จะรกเกินไปและไม่ตรงกับคำถามล่าสุดที่ผู้ใช้สนใจ)
+  const latestCitations = [...messages]
+    .reverse()
+    .find((m) => m.role === "assistant" && m.citations && m.citations.length > 0)?.citations;
 
   const conversationListPanel = (
     <>
@@ -98,8 +113,6 @@ export default function ChatWindow() {
   );
 
   return (
-    // -m-6 ยกเลิก p-6 ของ Content (DashboardLayout) เฉพาะหน้านี้ — ให้ panel ชนขอบเต็มพื้นที่
-    // แบบ NotebookLM จริงๆ ไม่ลอยเป็นการ์ดมีขอบขาวรอบ ๆ (หน้าอื่นใน dashboard ยังใช้ padding ปกติ)
     <div className="-m-6 flex h-screen gap-4 bg-[#131314] p-4">
       <div className="hidden md:flex md:w-72 md:shrink-0 md:flex-col md:border-r md:border-white/10 md:pr-4">
         {conversationListPanel}
@@ -124,10 +137,8 @@ export default function ChatWindow() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="mb-1 flex items-center justify-between md:mb-2">
-          <h1 className="text-lg font-medium text-gray-100">แชท</h1>
+          <h1 className="text-lg font-medium text-gray-100">แชทกฎหมาย</h1>
           <div className="flex items-center gap-2">
-            {/* เลือกโมเดลได้แค่ตอนยังไม่มีบทสนทนา (ยังไม่ส่งข้อความแรก) — หลังสร้างแล้ว
-                modelTier ผูกกับ conversation ถาวร เปลี่ยนกลางคันไม่ได้ (ดู Phase 5.1) */}
             {activeConversationId == null && (
               <ModelSelect value={selectedModelId} onChange={setSelectedModelId} />
             )}
@@ -140,10 +151,18 @@ export default function ChatWindow() {
             </button>
           </div>
         </div>
-        <MessageThread />
+        <MessageThread
+          onCitationClick={handleCitationClick}
+          emptyTitle="แชทกฎหมาย"
+          emptyDescription="ถามคำถามเกี่ยวกับตัวบทกฎหมายไทย — คำตอบจะอ้างอิงจากคลังกฎหมายพร้อมเลขอ้างอิงที่ตรวจสอบย้อนกลับได้"
+        />
         {error && <div className="px-2 pb-2 text-sm text-red-400">{error}</div>}
         <ChatInput onSend={handleSend} disabled={isStreaming} />
       </div>
+
+      {latestCitations && latestCitations.length > 0 && (
+        <CitationPanel citations={latestCitations} />
+      )}
     </div>
   );
 }

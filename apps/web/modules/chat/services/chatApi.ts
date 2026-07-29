@@ -1,6 +1,6 @@
 import { api } from "@/services/api";
 import type { ApiResponse } from "@/types";
-import type { ConversationSummary, ConversationDetail } from "../types";
+import type { ConversationSummary, ConversationDetail, ConversationMode } from "../types";
 
 // list/create/get/delete เท่านั้น — ส่งข้อความ (streaming) อยู่ใน useChatStream แทน
 // เพราะต้องใช้ fetch + ReadableStream ไม่ใช่ axios (Dev Standard #10)
@@ -10,11 +10,9 @@ export const chatApi = {
     return response.data.data;
   },
 
-  async create(modelId?: string): Promise<ConversationSummary> {
-    const response = await api.post<ApiResponse<ConversationSummary>>(
-      "/api/conversations",
-      modelId ? { modelId } : undefined,
-    );
+  async create(modelId?: string, mode?: ConversationMode): Promise<ConversationSummary> {
+    const body = modelId || mode ? { modelId, mode } : undefined;
+    const response = await api.post<ApiResponse<ConversationSummary>>("/api/conversations", body);
     return response.data.data;
   },
 

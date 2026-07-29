@@ -5,8 +5,10 @@ import MarkdownMessage from "./MarkdownMessage";
 // ข้อความ assistant เป็น markdown เต็มรูปแบบ (heading/list/code block ฯลฯ) ไม่มีกรอบ ชิดซ้าย
 export default function MessageBubble({
   message,
+  onCitationClick,
 }: {
   message: Pick<ChatMessage, "role" | "content">;
+  onCitationClick?: (index: number) => void;
 }) {
   const isUser = message.role === "user";
 
@@ -23,7 +25,7 @@ export default function MessageBubble({
   return (
     <div className="flex justify-start">
       <div className="max-w-[85%] wrap-break-word text-gray-100">
-        <MarkdownMessage content={message.content} />
+        <MarkdownMessage content={message.content} onCitationClick={onCitationClick} />
       </div>
     </div>
   );

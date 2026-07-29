@@ -135,9 +135,16 @@ describe("Legal chat completion with RAG grounding (Phase 5.5)", () => {
       orderBy: { createdAt: "asc" },
     });
     expect(messages).toHaveLength(1);
-    const citations = messages[0].citations as Array<{ index: number }> | null;
+    const citations = messages[0].citations as Array<{
+      index: number;
+      content: string;
+      citationLabel: string;
+    }> | null;
     expect(citations).not.toBeNull();
     expect(citations?.[0]?.index).toBe(1);
+    // content ต้องถูกเก็บมาด้วย ไม่ใช่แค่ label — ให้แผงอ้างอิงฝั่ง web แสดงตัวบทได้ทันที
+    expect(citations?.[0]?.content.length).toBeGreaterThan(0);
+    expect(citations?.[0]?.citationLabel.length).toBeGreaterThan(0);
   });
 
   test("citing an out-of-range [n] does not get persisted as a citation", async () => {

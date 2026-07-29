@@ -15,6 +15,7 @@ interface MenuItem {
 
 const MENU_ITEMS: MenuItem[] = [
   { key: "chat", menuKey: "chat", label: "แชท", route: ROUTES.chat },
+  { key: "legal-chat", menuKey: "legal-chat", label: "แชทกฎหมาย", route: ROUTES.legalChat },
   { key: "library", menuKey: "library", label: "คลังกฎหมาย", route: ROUTES.library },
   { key: "users", menuKey: "users", label: "จัดการผู้ใช้งาน", route: ROUTES.users },
   { key: "settings", menuKey: "settings", label: "ตั้งค่าสิทธิ์", route: ROUTES.settings },

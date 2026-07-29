@@ -4,11 +4,13 @@ import { useCallback, useRef, useState } from "react";
 import { API_BASE_URL } from "@/constants";
 import { useAuthStore } from "@/store/authStore";
 import { useChatStore } from "@/store/chatStore";
+import type { Citation } from "../types";
 
 interface StreamEvent {
   delta?: string;
   done?: boolean;
   error?: string;
+  citations?: Citation[];
 }
 
 // ทยอยโชว์ทีละ REVEAL_CHARS_PER_TICK ตัวอักษรทุก REVEAL_INTERVAL_MS แทนการโชว์ delta
@@ -48,6 +50,7 @@ export function useChatStream() {
       let hadError = false;
       let networkDone = false;
       let finalized = false;
+      let citations: Citation[] | undefined;
 
       const finalize = () => {
         if (finalized) return;
@@ -58,7 +61,7 @@ export function useChatStream() {
         if (hadError) {
           resetStreamingBuffer();
         } else {
-          commitStreamingMessage();
+          commitStreamingMessage(citations);
         }
         setIsStreaming(false);
       };
@@ -111,6 +114,8 @@ export function useChatStream() {
             } else if (event.error) {
               setError(event.error);
               hadError = true;
+            } else if (event.done) {
+              citations = event.citations;
             }
           }
         }

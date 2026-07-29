@@ -4,7 +4,15 @@ import { useEffect, useRef } from "react";
 import { useChatStore } from "@/store/chatStore";
 import MessageBubble from "./MessageBubble";
 
-export default function MessageThread() {
+export default function MessageThread({
+  onCitationClick,
+  emptyTitle = "LAW-AI",
+  emptyDescription = "พิมพ์คำถามอะไรก็ได้ด้านล่างเพื่อเริ่มบทสนทนาใหม่",
+}: {
+  onCitationClick?: (index: number) => void;
+  emptyTitle?: string;
+  emptyDescription?: string;
+}) {
   const messages = useChatStore((state) => state.messages);
   const streamingBuffer = useChatStore((state) => state.streamingBuffer);
   const isStreaming = useChatStore((state) => state.isStreaming);
@@ -17,8 +25,8 @@ export default function MessageThread() {
   if (messages.length === 0 && !isStreaming) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-        <h2 className="text-2xl font-semibold text-gray-100">LAW-AI</h2>
-        <p className="max-w-md text-gray-400">พิมพ์คำถามอะไรก็ได้ด้านล่างเพื่อเริ่มบทสนทนาใหม่</p>
+        <h2 className="text-2xl font-semibold text-gray-100">{emptyTitle}</h2>
+        <p className="max-w-md text-gray-400">{emptyDescription}</p>
       </div>
     );
   }
@@ -27,7 +35,7 @@ export default function MessageThread() {
     <div className="flex-1 overflow-y-auto px-3 py-4">
       <div className="mx-auto flex max-w-3xl flex-col gap-4">
         {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
+          <MessageBubble key={message.id} message={message} onCitationClick={onCitationClick} />
         ))}
         {isStreaming && streamingBuffer && (
           <MessageBubble message={{ role: "assistant", content: streamingBuffer }} />

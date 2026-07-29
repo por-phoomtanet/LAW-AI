@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ConversationSummary, ChatMessage } from "@/modules/chat/types";
+import type { ConversationSummary, ChatMessage, Citation } from "@/modules/chat/types";
 
 // ไม่ persist — DB เป็น source of truth เสมอ (เลี่ยงบั๊กแบบ stale-localStorage-JWT ที่เคยเจอ)
 interface ChatState {
@@ -15,7 +15,7 @@ interface ChatState {
   setMessages: (messages: ChatMessage[]) => void;
   appendUserMessage: (content: string) => void;
   appendStreamingDelta: (delta: string) => void;
-  commitStreamingMessage: () => void;
+  commitStreamingMessage: (citations?: Citation[]) => void;
   resetStreamingBuffer: () => void;
   setIsStreaming: (isStreaming: boolean) => void;
 }
@@ -69,7 +69,7 @@ export const useChatStore = create<ChatState>()((set) => ({
   appendStreamingDelta: (delta) =>
     set((state) => ({ streamingBuffer: state.streamingBuffer + delta })),
 
-  commitStreamingMessage: () =>
+  commitStreamingMessage: (citations) =>
     set((state) =>
       state.streamingBuffer
         ? {
@@ -80,6 +80,7 @@ export const useChatStore = create<ChatState>()((set) => ({
                 role: "assistant",
                 content: state.streamingBuffer,
                 modelUsed: null,
+                citations: citations ?? null,
                 createdAt: new Date().toISOString(),
               },
             ],

@@ -36,43 +36,80 @@ function isBlockCode(className: string | undefined, content: string) {
   return Boolean(className?.includes("language-")) || content.includes("\n");
 }
 
-const components: Components = {
-  h1: ({ children }) => <h1 className="mb-2 mt-4 text-xl font-bold text-gray-100">{children}</h1>,
-  h2: ({ children }) => <h2 className="mb-2 mt-4 text-lg font-bold text-gray-100">{children}</h2>,
-  h3: ({ children }) => <h3 className="mb-2 mt-3 text-base font-bold text-gray-100">{children}</h3>,
-  p: ({ children }) => <p className="mb-3 leading-relaxed text-gray-100 last:mb-0">{children}</p>,
-  ul: ({ children }) => (
-    <ul className="mb-3 ml-5 list-disc space-y-1.5 text-gray-100">{children}</ul>
-  ),
-  ol: ({ children }) => (
-    <ol className="mb-3 ml-5 list-decimal space-y-1.5 text-gray-100">{children}</ol>
-  ),
-  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-  strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
-  hr: () => <hr className="my-4 border-white/10" />,
-  a: ({ children, href }) => (
-    <a href={href} target="_blank" rel="noreferrer" className="text-blue-400 underline">
-      {children}
-    </a>
-  ),
-  // react-markdown ห่อ code แบบ block ไว้ใน pre เสมอ — ให้ pre เป็นแค่ passthrough
-  // แล้วให้ CodeBlock (เรียกจาก code override ด้านล่าง) เป็นคนคุม wrapper เองทั้งหมด
-  pre: ({ children }) => <>{children}</>,
-  code: ({ className, children }) => {
-    const content = String(children).replace(/\n$/, "");
-    if (isBlockCode(className, content)) {
-      return <CodeBlock>{content}</CodeBlock>;
-    }
-    return (
-      <code className="rounded bg-white/10 px-1.5 py-0.5 text-sm text-gray-100">{content}</code>
-    );
-  },
-};
+const CITATION_HREF_PATTERN = /^#citation-(\d+)$/;
 
-export default function MarkdownMessage({ content }: { content: string }) {
+function buildComponents(onCitationClick?: (index: number) => void): Components {
+  return {
+    h1: ({ children }) => <h1 className="mb-2 mt-4 text-xl font-bold text-gray-100">{children}</h1>,
+    h2: ({ children }) => <h2 className="mb-2 mt-4 text-lg font-bold text-gray-100">{children}</h2>,
+    h3: ({ children }) => (
+      <h3 className="mb-2 mt-3 text-base font-bold text-gray-100">{children}</h3>
+    ),
+    p: ({ children }) => <p className="mb-3 leading-relaxed text-gray-100 last:mb-0">{children}</p>,
+    ul: ({ children }) => (
+      <ul className="mb-3 ml-5 list-disc space-y-1.5 text-gray-100">{children}</ul>
+    ),
+    ol: ({ children }) => (
+      <ol className="mb-3 ml-5 list-decimal space-y-1.5 text-gray-100">{children}</ol>
+    ),
+    li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+    strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
+    hr: () => <hr className="my-4 border-white/10" />,
+    a: ({ children, href }) => {
+      // [1] ถูกแปลงเป็น [1](#citation-1) ก่อนส่งเข้า ReactMarkdown (ดู MarkdownMessage) —
+      // ดักตรงนี้ให้ render เป็นปุ่มอ้างอิงคลิกได้แทนลิงก์จริง
+      const citationMatch = href?.match(CITATION_HREF_PATTERN);
+      if (citationMatch && onCitationClick) {
+        const index = Number(citationMatch[1]);
+        return (
+          <button
+            type="button"
+            onClick={() => onCitationClick(index)}
+            className="mx-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-500/20 px-1 text-xs font-medium text-blue-300 align-middle hover:bg-blue-500/30"
+          >
+            {index}
+          </button>
+        );
+      }
+      return (
+        <a href={href} target="_blank" rel="noreferrer" className="text-blue-400 underline">
+          {children}
+        </a>
+      );
+    },
+    // react-markdown ห่อ code แบบ block ไว้ใน pre เสมอ — ให้ pre เป็นแค่ passthrough
+    // แล้วให้ CodeBlock (เรียกจาก code override ด้านล่าง) เป็นคนคุม wrapper เองทั้งหมด
+    pre: ({ children }) => <>{children}</>,
+    code: ({ className, children }) => {
+      const content = String(children).replace(/\n$/, "");
+      if (isBlockCode(className, content)) {
+        return <CodeBlock>{content}</CodeBlock>;
+      }
+      return (
+        <code className="rounded bg-white/10 px-1.5 py-0.5 text-sm text-gray-100">{content}</code>
+      );
+    },
+  };
+}
+
+export default function MarkdownMessage({
+  content,
+  onCitationClick,
+}: {
+  content: string;
+  // ส่ง prop นี้มาก็ต่อเมื่ออยากให้ [n] กลายเป็นปุ่มคลิกได้ (แชทกฎหมายเท่านั้น) — แชท
+  // ทั่วไปไม่ส่งมา จึงไม่กระทบพฤติกรรมเดิมเลย (เผื่อผู้ใช้พิมพ์ตัวเลขในวงเล็บเฉยๆ)
+  onCitationClick?: (index: number) => void;
+}) {
+  // แปลง "[1]" → "[1](#citation-1)" เป็น markdown link syntax จริง ก่อนส่งเข้า parser —
+  // ให้ a override ด้านบนดักแปลงเป็นปุ่มอีกที แทนการเขียน remark plugin ใหม่
+  const processedContent = onCitationClick
+    ? content.replace(/\[(\d+)\]/g, "[$1](#citation-$1)")
+    : content;
+
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-      {content}
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={buildComponents(onCitationClick)}>
+      {processedContent}
     </ReactMarkdown>
   );
 }

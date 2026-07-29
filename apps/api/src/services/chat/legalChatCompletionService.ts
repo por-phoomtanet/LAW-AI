@@ -38,6 +38,9 @@ function extractValidatedCitations(text: string, passages: RetrievedPassage[]) {
         passageId: passage.passageId,
         documentId: passage.documentId,
         citationLabel: passage.citationLabel,
+        // เก็บเนื้อหาเต็มด้วย (ไม่ใช่แค่ label) ให้แผงอ้างอิงฝั่ง web แสดงตัวบทได้ทันที
+        // โดยไม่ต้อง fetch แยกอีกรอบ — ข้อมูลมีอยู่แล้วจาก retrieval รอบนี้
+        content: passage.content,
       };
     });
 }

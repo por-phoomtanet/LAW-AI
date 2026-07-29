@@ -182,7 +182,7 @@ model Message {
   conversation   Conversation @relation(fields: [conversationId], references: [id])
   role           String // "user" | "assistant"
   content        String       @db.Text
-  citations      Json? // เฉพาะแชทกฎหมาย (Phase 5.5) — [{ index, passageId, documentId, citationLabel }] ที่ validate แล้วว่าตรงกับ passage ที่ retrieve จริง; general chat ไม่ใช้ field นี้เลย (null เสมอ)
+  citations      Json? // เฉพาะแชทกฎหมาย (Phase 5.5/5.6) — [{ index, passageId, documentId, citationLabel, content }] ที่ validate แล้วว่าตรงกับ passage ที่ retrieve จริง (content เก็บมาด้วยให้แผงอ้างอิงฝั่ง web แสดงตัวบทได้โดยไม่ต้อง fetch ซ้ำ); general chat ไม่ใช้ field นี้เลย (null เสมอ)
   modelUsed      String? // model id ที่ใช้ตอบจริง (เผื่อ fallback)
   createdAt      DateTime     @default(now())
 

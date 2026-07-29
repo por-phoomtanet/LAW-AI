@@ -34,6 +34,7 @@ async function main() {
 
   const permissions: PermissionRow[] = [
     { roleId: adminRole.id, menuKey: "chat", canView: true },
+    { roleId: adminRole.id, menuKey: "legal-chat", canView: true },
     {
       roleId: adminRole.id,
       menuKey: "library",
@@ -59,8 +60,10 @@ async function main() {
       canDelete: true,
     },
     { roleId: researcherRole.id, menuKey: "chat", canView: true },
+    { roleId: researcherRole.id, menuKey: "legal-chat", canView: true },
     { roleId: researcherRole.id, menuKey: "library", canView: true },
     { roleId: subscriberRole.id, menuKey: "chat", canView: true },
+    { roleId: subscriberRole.id, menuKey: "legal-chat", canView: true },
     { roleId: subscriberRole.id, menuKey: "library", canView: true },
   ];
 

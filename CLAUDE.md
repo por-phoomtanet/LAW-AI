@@ -779,14 +779,19 @@ Service throw error ภาษาไทยที่ user เข้าใจได
   - 🧪 test: `apps/api/tests/legalChatCompletion.test.ts` (5 pass) — legal-mode ใส่ context+persona ในพรอมต์จริง, `[1]` ที่ตรงกับ passage จริงถูก validate+persist, `[999]` ปลอมถูกตัดทิ้งไม่ persist, ไม่เจอ context → เห็น note "ไม่พบข้อมูลที่เกี่ยวข้อง" ในพรอมต์, general-mode conversation ยังใช้ `chatCompletionService` เดิม (ไม่มี persona/context เลย) ✅ | live curl ผ่าน `docker compose` จริงด้วย `anthropic/claude-opus-5` จริง — ถามคำถามที่ไม่มีคำตอบชัดเจนในคลัง โมเดลตอบ "ไม่พบข้อมูลที่เกี่ยวข้อง" ถูกต้องแทนที่จะเดา (ยืนยันว่า grounding rule ทำงานจริง ไม่ใช่แค่ mock) ✅ | `bun test` (root) → 54 pass ไม่กระทบของเดิม ✅
   - 📝 commit: `feat(api): legal chat completion service with lawyer persona and citation grounding`
 
-- [ ] 5.6 Web: เมนู + หน้า "แชทกฎหมาย" แยกจาก "แชท"
-  - เพิ่มเมนู `legal-chat` ใน `Sidebar.tsx`/`ROUTES` (เมนูใหม่ ต้อง seed `RolePermission` เพิ่มด้วย) + route ใหม่ (เช่น `/legal-chat`) — ไม่แก้ route/หน้า `/` (แชททั่วไป) เลย
-  - reuse component จาก `modules/chat/` เท่าที่ทำได้ (`MessageThread`, `MarkdownMessage`, `ChatInput`, `ModelSelect` จาก 5.2 — UI เหมือนกันแค่ endpoint/mode ต่าง)
-  - **แผงอ้างอิงด้านข้าง** (ตามภาพตัวอย่างที่ผู้ใช้ส่งมา — คอลัมน์ขวาแยกจาก thread หลัก ไม่ใช่แค่ modal/link): ต่อ 1 ข้อความของ assistant ที่มี citations โชว์การ์ด "แหล่งอ้างอิงคำตอบ" 1 ใบต่อ `[n]` ที่ validate แล้ว มีเลขกำกับ (`[1]`, `[2]`...) ตรงกับที่ปรากฏในเนื้อความ + ชื่อกฎหมาย/มาตรา + เนื้อหาเต็มของ passage นั้นแบบ expand/collapse ได้ — คลิกเลข `[n]` ในเนื้อความให้ scroll/highlight ไปยังการ์ดที่ตรงกันในแผงขวา (เหมือน anchor jump ของ TOC ใน `/library` ที่ทำไว้แล้วใน Phase 4.4)
+- [x] 5.6 Web: เมนู + หน้า "แชทกฎหมาย" แยกจาก "แชท"
+  - เพิ่มเมนู `legal-chat` ใน `Sidebar.tsx`/`ROUTES` + seed `RolePermission` (`canView` ทุก role เหมือน `chat`/`library`) + route ใหม่ `/legal-chat` (`app/(dashboard)/legal-chat/page.tsx`) — ไม่แก้ route/หน้า `/` (แชททั่วไป) เลย
+  - `LegalChatWindow.tsx` (ไฟล์ใหม่ เกือบเหมือน `ChatWindow.tsx` ทุกอย่าง) reuse `MessageThread`/`MessageBubble`/`MarkdownMessage`/`ChatInput`/`ModelSelect`/`ConversationList` ตรงๆ — สร้าง conversation ด้วย `mode: "legal"`, filter `chatApi.list()` เอาเฉพาะ `mode==="legal"`
+  - **`chatStore` เป็น global store เดียวใช้ร่วมกับแชททั่วไป** — ถ้าไม่ filter จะเห็นบทสนทนาปนกันตอนสลับหน้า และถ้า `activeConversationId` ค้างจากอีกโหมดต้อง reset ทิ้ง (แก้ทั้ง `ChatWindow.tsx` และ `LegalChatWindow.tsx` คู่กัน — จุดเดียวที่ต้องแตะ `ChatWindow.tsx` ใน Phase 5 ทั้งหมด เป็น bug fix รองรับ multi-mode ไม่ใช่ฟีเจอร์ RAG ใหม่)
+  - **แผงอ้างอิงด้านข้าง** (`CitationPanel.tsx`, ตามภาพตัวอย่างที่ผู้ใช้ส่งมา — คอลัมน์ขวาแยกจาก thread หลัก): โชว์ citations ของข้อความ assistant "ล่าสุด" ที่มี citations เท่านั้น (ไม่ใช่ทุกข้อความในบทสนทนา) การ์ดละ 1 `[n]` มีเลขกำกับ + ชื่อกฎหมาย/มาตรา + เนื้อหาเต็มแบบ expand/collapse ได้ (ต้องแก้ `legalChatCompletionService.ts`/5.5 ให้เก็บ `content` ลง `Message.citations` ด้วย ไม่ใช่แค่ label — ข้อมูลมีอยู่แล้วจาก retrieval ไม่ต้อง fetch ซ้ำ)
+  - `[n]` ในเนื้อความคลิกได้จริง — ไม่ต้องเขียน remark plugin ใหม่: preprocess string แทน `[1]` → `[1](#citation-1)` (markdown link syntax จริง) ก่อนส่งเข้า `ReactMarkdown` แล้ว override `a` component ให้ดัก href แพทเทิร์น `#citation-N` render เป็นปุ่มแทนลิงก์ (`MarkdownMessage.tsx` เพิ่ม optional prop `onCitationClick` — ไม่ส่งมา = พฤติกรรมเดิมของแชททั่วไปไม่เปลี่ยนเลย)
+  - **ยังไม่ทำ**: คลิก `[n]` ในเนื้อความ jump ไปแผงขวาได้ (scrollIntoView ผ่าน DOM id ตรงๆ) แต่ยังไม่ auto-expand การ์ดให้ (ต้อง expand เองอีกคลิก) — ยอมรับเป็น simplification ของรอบนี้เพราะ state `expanded` อยู่ใน `CitationCard` แต่ละใบแยกกัน ไม่ได้ lift ขึ้นมาที่ parent
+
+  - 🧪 test: `bunx tsc --noEmit` + `bun run lint` (root) → ผ่านทั้งคู่ไม่มี error ✅ | `docker compose up -d --build` → ทั้งสอง container healthy, curl `/legal-chat` → 200 ✅ | citation `content` field ยืนยันผ่าน `legalChatCompletion.test.ts` (เพิ่ม assertion ใหม่) ✅ | live curl ผ่าน `docker compose` จริงด้วยโมเดลจริง — บทสนทนาโหมด legal ถามคำถามกำกวม (ไม่มี `[n]` ชัดเจน) → `citations:[]` ถูกต้อง ไม่มโนอ้างอิงมั่วๆ ✅ | **การคลิก `[n]`/scroll/expand จริงบนหน้าจอยังไม่ยืนยันด้วย browser จริง** (ไม่มี browser tool ใน environment นี้)
+  - 📝 commit: `feat(web): legal chat page with citation side panel`
   - component ใหม่: `CitationPanel.tsx` (แผงขวา) + `CitationBadge.tsx` (เลข `[n]` ในเนื้อความ, คลิกได้) — ข้อมูล citations มาจาก `Message.citations` ที่ backend validate ไว้แล้วใน 5.5 (มี `documentId`/`passageId`/`citedText`/`chunkIndex` เท่าที่ field เดิมรองรับ)
 
-- [ ] 5.7 (stretch, ไม่บังคับรอบนี้) Redis cache สำหรับคำถามซ้ำเป๊ะ
-  - เฉพาะกรณีอยาก optimize เพิ่มหลัง 5.3-5.6 ใช้งานจริงแล้วเจอว่าจำเป็น — cache key = hash ของคำถาม (normalize whitespace/case) → cache ผลลัพธ์ retrieval (ไม่ cache คำตอบ LLM ทั้งข้อความ เพราะ context สนทนาก่อนหน้าต่างกันทำให้คำตอบไม่เหมือนกันได้แม้คำถามล่าสุดจะซ้ำ)
+
 
 ---
 
