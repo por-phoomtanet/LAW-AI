@@ -738,10 +738,18 @@ Service throw error ภาษาไทยที่ user เข้าใจได
   - 🧪 test: `bunx tsc --noEmit` → ผ่านไม่มี type error ✅ | `docker compose up -d --build web` → build สำเร็จ, container healthy ✅ | API layer (การส่ง `modelId` จริง) ยืนยันแล้วผ่าน curl ใน 5.1 — **การเลือกโมเดลจริงบนหน้าจอ (dropdown แสดง/dark styling ถูกต้อง) ยังไม่ยืนยันด้วย browser จริง**
   - 📝 commit: `feat(web): add ai model picker to chat window`
 
-- [ ] 5.3 DB: `Conversation.mode` column + full-text search index บน `Passage.content` (ไม่ใช้ embedding/semantic search ในรอบนี้)
+- [x] 5.3 DB: `Conversation.mode` column + full-text search index บน `Passage.content` (ไม่ใช้ embedding/semantic search ในรอบนี้)
   - `Conversation.mode String @default("general")` — migration แบบ additive มี default ไม่กระทบแถวเดิมที่มีอยู่แล้ว
-  - เพิ่ม `tsvector` generated column (`to_tsvector('simple', content)` — ใช้ `simple` config ไม่ใช่ `thai`/`english` เพราะ Postgres ไม่มี Thai text search config ในตัว, `simple` ยัง tokenize คำ Thai ที่คั่นด้วยช่องว่าง/เครื่องหมายวรรคตอนได้) + GIN index บน column นั้น ผ่าน raw SQL migration (เหมือน pattern เดิมของ HNSW index ใน Phase 1)
+  - เพิ่ม `searchVector` generated column (`to_tsvector('simple', content)` — ใช้ `simple` config ไม่ใช่ `thai`/`english` เพราะ Postgres ไม่มี Thai text search config ในตัว, `simple` ยัง tokenize คำ Thai ที่คั่นด้วยช่องว่าง/เครื่องหมายวรรคตอนได้) + GIN index บน column นั้น ผ่าน raw SQL migration (เหมือน pattern เดิมของ HNSW index ใน Phase 1) — ต้องประกาศ `searchVector Unsupported("tsvector")?` ใน schema.prisma ด้วย (เหมือน `embedding` เดิม) กัน `migrate dev` รอบถัดไปเห็นเป็น drift แล้วพยายามลบทิ้ง
   - เพิ่ม `pg_trgm` extension + trigram index เสริมสำหรับกรณีค้นคำที่ติดกัน ไม่มีช่องว่างคั่น (คำไทยส่วนใหญ่ไม่มีช่องว่างระหว่างคำ ตัด tsvector ด้วยช่องว่างอย่างเดียวไม่พอ)
+  - migration: `20260729170831_add_conversation_mode_and_passage_search` (สร้างด้วย `--create-only` แล้ว hand-edit raw SQL เข้าไป)
+
+  - [x] FIX #14: `bunx prisma migrate dev` (ตัวเต็ม ไม่ใช่ `--create-only`) ค้างไม่มี output ใดๆ เลยนานกว่า 2 นาที — เช็ค `pg_stat_activity` แล้วพบว่า**ไม่มี query ค้างอยู่ที่ฝั่ง DB เลย** และ `_prisma_migrations`/`\d "Passage"` ยืนยันว่า migration จริงๆ apply สำเร็จแล้ว (มี `searchVector` + GIN index ครบ) แปลว่า Prisma CLI ค้างอยู่หลังจาก apply SQL เสร็จ (คาดว่าติดที่ step `prisma generate`/prompt ที่ไม่มี TTY ให้ตอบ ไม่ใช่ตัว migration เอง) | แก้ด้วยการ `TaskStop` process ที่ค้างทิ้ง แล้วรัน `bunx prisma generate` แยกต่างหากเพื่อ sync client เอง (ยืนยันว่า client เห็น field `mode` ใหม่ผ่านการ query ตรงจริง ไม่ใช่แค่เดา)
+    - 🧪 test: `bun -e` query `conversation.mode` ผ่าน client ที่ generate ใหม่ → ได้ค่าจริงกลับมา ✅ | `bun test` (api) → 45 pass ไม่กระทบของเดิม ✅
+    - 📝 commit: `fix(db): recover from hung prisma migrate dev by regenerating client separately`
+
+  - 🧪 test: functional check ตรงกับ Postgres จริง — `plainto_tsquery('simple', 'สถาบัน')` คืนผลลัพธ์ที่ถูกต้อง (มาตรา 3/4 ที่มีคำว่า "สถาบัน" จริง) ✅ | `EXPLAIN` ยืนยันว่าใช้ `Bitmap Index Scan on "Passage_searchVector_idx"` ไม่ใช่ sequential scan ✅
+  - 📝 commit: `feat(db): add conversation mode and full-text search index for legal chat retrieval`
   - ไม่ทำ semantic/embedding search รอบนี้ — คลังกฎหมายไทยเป็น citation-heavy (ผู้ใช้มักถามถึงเลขมาตรา/ชื่อกฎหมายตรงๆ) full-text/trigram พอสำหรับ v1 ถ้าคุณภาพไม่พอค่อยกลับมาเพิ่ม embedding column ทีหลัง (schema เผื่อไว้แล้วจาก design เดิม เพิ่มทีหลังได้โดยไม่ breaking)
 
 - [ ] 5.4 API: retrieval service

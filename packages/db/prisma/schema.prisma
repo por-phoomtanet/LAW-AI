@@ -140,6 +140,10 @@ model Passage {
   content       String          @db.Text
   contentHash   String
   createdAt     DateTime        @default(now())
+  // generated column (to_tsvector) + GIN/trgm index สร้างผ่าน raw SQL migration
+  // (Phase 5.3) — Prisma ไม่รู้จัก GENERATED ALWAYS AS ประกาศเป็น Unsupported ไว้
+  // กัน `migrate dev` เห็นเป็น drift แล้วพยายามลบคอลัมน์นี้ทิ้ง
+  searchVector  Unsupported("tsvector")?
 
   @@unique([versionId, ordinal])
   @@index([versionId])
@@ -165,6 +169,7 @@ model Conversation {
   user      User      @relation(fields: [userId], references: [id])
   title     String?
   modelTier String    @default("deepseek/deepseek-v4-flash") // เก็บ OpenRouter model id ตรงๆ ไม่ใช่ enum tier
+  mode      String    @default("general") // "general" | "legal" (Phase 5.3) — แยกแชททั่วไป/แชทกฎหมาย
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   messages  Message[]
