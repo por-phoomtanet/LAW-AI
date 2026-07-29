@@ -30,7 +30,9 @@ export default function Sidebar() {
 
   return (
     <Menu
+      theme="dark"
       mode="inline"
+      style={{ background: "#131314" }}
       selectedKeys={[pathname]}
       onClick={({ key }) => {
         const item = visibleItems.find((i) => i.key === key);
