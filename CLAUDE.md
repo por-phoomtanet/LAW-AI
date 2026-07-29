@@ -661,12 +661,17 @@ Service throw error ภาษาไทยที่ user เข้าใจได
 
 > หมายเหตุ: Phase นี้คือ **port โค้ดที่ verify กับข้อมูลจริงแล้วจาก branch `chore/trim-schema-phase-1-2`** ไม่ใช่ออกแบบใหม่ตั้งแต่ต้น — branch นั้นเคย ingest จริงและตรวจสอบ raw dataset ของ `ocs-krisdika` ละเอียดจนรู้ gotcha สำคัญหลายจุดแล้ว (ดูรายละเอียดในแต่ละ task ด้านล่าง) งานนี้คือ trim เอาเฉพาะส่วนที่จำเป็นสำหรับ "TOC + หมวดหมู่" มาใช้กับ `main` **ตั้งใจตัดออกไม่ทำรอบนี้**: หัวข้อกฎหมาย/tag (`LegalTopic`/`DocumentTopic` — ตรวจสอบแล้วว่า ocs-krisdika ไม่มี field นี้เลย `category = null` 100% ต้อง classify ด้วย LLM แยกต่างหาก), คำอธิบาย/cross-reference ที่คลิกได้ในเนื้อหา (`InlineReference` — ต้อง derive เองด้วย regex/NLP เป็น batch job แยก ไม่มีใน raw dataset), UI version-timeline slider (schema รองรับอยู่แล้วเพราะ `Passage` ผูกกับ `DocumentVersion` แต่ frontend timeline component ไม่ทำรอบนี้), และ `soc-ratchakitcha` OCR fallback (24.6% ของ records ที่ `sections` ว่างจะถูกข้ามไปก่อน ไม่ fallback)
 
-- [ ] 4.1 DB: เพิ่ม `Document`/`DocumentVersion`/`Passage` model (ไม่แตะ `LegalDocument`/`DocumentChunk` เดิมที่ chat/seed ใช้อยู่ — เพิ่มคู่ขนานไปก่อน)
-  - Port จาก `chore/trim-schema-phase-1-2`'s `packages/db/prisma/schema.prisma` แบบตัดทอน — **ไม่เอา** `Workspace`/multi-tenancy (`main` ยังไม่มี concept นี้), `CourtCaseMeta` (คำพิพากษา ไม่อยู่ใน scope), `LegalTopic`/`DocumentTopic`/`InlineReference` (ดูเหตุผลข้างบน), `ResearchSession`/`ResearchMessage`/`Citation` (เป็นของ RAG chat ที่ตัดสินใจไม่ทำรอบนี้)
-  - `Document.lawCode` (`@unique`) = `law_code` จาก dataset — ผูกทุกเวอร์ชันของกฎหมายฉบับเดียวกันเข้าด้วยกัน (พิสูจน์แล้วจากข้อมูลจริงว่าใช้ได้ เช่น พ.ร.บ.ลิขสิทธิ์ 2537 มี 7 เวอร์ชันใน dataset), `docType` เก็บ prefix ดิบ (เช่น "พระราชบัญญัติ") ไม่เก็บ "หมวดหมู่" (กฎหมายหลัก/ลำดับรอง) เป็น column แยก — คำนวณจาก `docType` ฝั่ง backend แทน (ดู 4.3)
-  - `DocumentVersion.isLatest` — **ห้ามเชื่อ `record.is_latest` จาก raw dataset ตรงๆ** ตรวจสอบแล้วว่าเชื่อไม่ได้ (ทุกเวอร์ชันของกฎหมายที่มีหลายเวอร์ชันประกาศ `is_latest: true` พร้อมกันหมด เป็น bug เชิงระบบของ dataset ไม่ใช่ edge case) ต้องคำนวณจาก `timeline_code` suffix ตัวเลขสูงสุดแทน
-  - `Passage.sectionType`/`parentId` — สร้าง tree หมวด→ส่วนที่→มาตรา จาก `sectionTypeId` ของ dataset ตรงๆ (verify แล้วจากข้อมูลจริง ไม่ต้องเดา): `1,3`=title/preamble, `4`=มาตรา (`section`), `8`=หมวด (`chapter`), `9`=ส่วนที่ (`part`), `2,13,14,15`=royal_name/transitional/signatory/note — 1 มาตราอาจมีหลาย row ดิบ (แยกด้วย `contentNo`) ต้อง group เป็น 1 `Passage` ก่อน insert
-  - migration ใหม่ (ห้ามชนกับ migration ของ `LegalDocument`/`DocumentChunk` เดิม)
+- [x] 4.1 DB: เพิ่ม `Document`/`DocumentVersion`/`Passage` model (ไม่แตะ `LegalDocument`/`DocumentChunk` เดิมที่ chat/seed ใช้อยู่ — เพิ่มคู่ขนานไปก่อน)
+  - Port จาก `chore/trim-schema-phase-1-2`'s `packages/db/prisma/schema.prisma` แบบตัดทอน — **ไม่เอา** `Workspace`/multi-tenancy, `CourtCaseMeta`, `LegalTopic`/`DocumentTopic`/`InlineReference`, `ResearchSession`/`ResearchMessage`/`Citation`, และ**ไม่เอา `embedding`** บน `Passage` ด้วย (scope รอบนี้คือ browse ตามหมวดหมู่ + TOC ไม่ใช่ semantic search)
+  - `Document.lawCode` (`@unique`) = `law_code`, `docType` เก็บ prefix ดิบ ไม่เก็บ "หมวดหมู่" เป็น column แยก — คำนวณฝั่ง backend (ดู 4.3)
+  - `DocumentVersion.isLatest` / `Passage.sectionType`/`parentId` — ตามที่ verify ไว้จากข้อมูลจริงบน branch เดิม (รายละเอียด gotcha ดู 4.2)
+  - migration: `20260729154208_add_document_library`
+
+  - [x] FIX #12: local dev DB drift อีกรอบ — สาเหตุจาก `bun run db:push` ที่รันทดสอบตอนแก้ FIX #env-file ของ `packages/db/package.json` ก่อนหน้า (`db push` sync ตาม schema.prisma แบบ declarative ทำให้ HNSW index ที่สร้างผ่าน raw SQL migration หายไปจาก live DB เพราะไม่ได้ประกาศไว้ใน schema.prisma) ทำให้ `migrate dev` เจอ drift ตอนจะสร้าง migration ของ Phase 4 | แก้ด้วย `prisma migrate reset --force` อีกรอบ (ขอ consent ผู้ใช้ก่อนตาม pattern เดิม, local dev เท่านั้น)
+    - 🧪 test: `prisma migrate reset --force` → apply migration เดิม 2 ตัวสำเร็จ + seed ผ่าน ✅ → `migrate dev --name add_document_library` → สร้าง+apply migration ใหม่สำเร็จไม่มี drift ✅ | `\dt` → เห็น `Document`/`DocumentVersion`/`Passage` ครบ ✅ | `bun test` (api) → 36 pass ไม่กระทบของเดิม ✅
+    - 📝 commit: `fix(db): reset local dev db to resolve drift from earlier db:push test`
+
+  - 📝 commit: `feat(db): add document/documentversion/passage models for law library browse`
 
 - [ ] 4.2 Ingestion script: `packages/ingestion` (ดาวน์โหลด + parse + upsert)
   - Port `packages/ingestion/src/{ingestOcsKrisdika.ts, sources/ocsKrisdika.ts}` และ `packages/core/src/documentCategory.ts` จาก `chore/trim-schema-phase-1-2` — ตัด `ratchakitchaFallback.ts` ออก (ตามหมายเหตุ scope ข้างบน — record ที่ `sections` ว่างให้ skip พร้อม log แทน)

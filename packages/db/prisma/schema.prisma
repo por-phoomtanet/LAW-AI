@@ -78,6 +78,74 @@ model DocumentChunk {
   @@index([documentId])
 }
 
+// ─── คลังกฎหมาย: Document/DocumentVersion/Passage (Phase 4 — browse ตามหมวดหมู่ + TOC) ───
+// Port จาก branch chore/trim-schema-phase-1-2 แบบตัดทอน — ไม่เอา Workspace/multi-tenancy,
+// CourtCaseMeta, LegalTopic/DocumentTopic, InlineReference, ResearchSession ฯลฯ (เหตุผล
+// แต่ละจุด ดู CLAUDE.md § Phase 4) ไม่ใช่ RAG corpus — ไม่มี embedding เพราะ scope รอบนี้คือ
+// browse ตามหมวดหมู่ + TOC รายมาตราเท่านั้น ไม่ใช่ semantic search — ไม่แตะ LegalDocument/
+// DocumentChunk เดิมที่ seed/chat ใช้อยู่
+
+// เอกสารกฎหมาย — "ตัวตน" ที่คงที่ข้ามการแก้ไข/เวอร์ชัน (lawCode = law_code จาก ocs-krisdika
+// ใช้ผูกทุกเวอร์ชันของกฎหมายฉบับเดียวกันเข้าด้วยกัน) docType ใช้คำนวณ "หมวดหมู่" (กฎหมายหลัก/
+// ลำดับรอง) ฝั่ง backend แทนการเก็บเป็น column แยก (ดู packages/core/src/documentCategory.ts)
+model Document {
+  id           Int               @id @default(autoincrement())
+  lawCode      String            @unique
+  title        String
+  docType      String
+  citationCode String?
+  isActive     Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  versions     DocumentVersion[]
+
+  @@index([docType])
+}
+
+// 1 เวอร์ชัน = 1 การแก้ไขของกฎหมาย (= timeline_code) — กฎหมายไทยหลายฉบับมีหลายเวอร์ชันจริง
+// (พ.ร.บ.ลิขสิทธิ์ 2537 มี 7 เวอร์ชันใน ocs-krisdika) ต้อง filter isLatest เสมอตอน query
+// เพื่อไม่ให้โชว์มาตราที่ถูกยกเลิกไปแล้ว — isLatest คำนวณจาก timeline_code suffix ตัวเลข
+// สูงสุดตอน ingest ไม่เชื่อ record.is_latest จาก raw dataset ตรงๆ (พิสูจน์แล้วว่าเชื่อไม่ได้)
+model DocumentVersion {
+  id            Int       @id @default(autoincrement())
+  documentId    Int
+  document      Document  @relation(fields: [documentId], references: [id])
+  versionLabel  String
+  externalId    String?
+  sourceUrl     String?
+  effectiveFrom DateTime?
+  isLatest      Boolean   @default(false)
+  contentHash   String
+  createdAt     DateTime  @default(now())
+  passages      Passage[]
+
+  @@unique([documentId, versionLabel])
+  @@index([documentId, isLatest])
+}
+
+// 1 มาตรา/หมวด/ส่วนที่ ต่อ 1 แถว — sectionType มาจาก sectionTypeId ของ ocs-krisdika ตรงๆ
+// (verify แล้วจากข้อมูลจริง ไม่ต้องเดา): 1,3=title/preamble, 4=มาตรา (section), 8=หมวด
+// (chapter), 9=ส่วนที่ (part), 2,13,14,15=royal_name/transitional/signatory/note
+// parentId ผูก หมวด → ส่วนที่ → มาตรา เป็น tree สำหรับ TOC โดยไม่ต้อง parse ข้อความเดา
+model Passage {
+  id            Int             @id @default(autoincrement())
+  versionId     Int
+  version       DocumentVersion @relation(fields: [versionId], references: [id])
+  ordinal       Int
+  sectionType   String
+  sectionNumber String?
+  parentId      Int?
+  parent        Passage?        @relation("PassageChildren", fields: [parentId], references: [id])
+  children      Passage[]       @relation("PassageChildren")
+  content       String          @db.Text
+  contentHash   String
+  createdAt     DateTime        @default(now())
+
+  @@unique([versionId, ordinal])
+  @@index([versionId])
+  @@index([versionId, parentId])
+}
+
 model Conversation {
   id        Int       @id @default(autoincrement())
   userId    Int
