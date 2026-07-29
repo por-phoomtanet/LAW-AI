@@ -7,8 +7,11 @@
   "scripts": {
     "generate": "prisma generate",
     "migrate:dev": "prisma migrate dev",
-    "migrate:deploy": "prisma migrate deploy",
-    "db:seed": "bun run src/seed.ts",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate deploy",
+    "db:seed": "bun src/seed.ts",
+    "db:reset": "prisma migrate reset --force",
+    "db:setup": "bun run db:migrate && bun run db:seed",
     "db:execute": "prisma db execute"
   },
   "dependencies": {
