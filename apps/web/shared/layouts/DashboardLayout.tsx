@@ -7,11 +7,11 @@ const { Sider, Content } = Layout;
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
-    <Layout className="min-h-screen">
-      <Sider breakpoint="md" collapsedWidth={0} style={{ background: "#131314" }}>
+    <Layout className="h-screen">
+      <Sider breakpoint="md" collapsedWidth={0} style={{ background: "#131314", height: "100vh" }}>
         <Sidebar />
       </Sider>
-      <Content className="p-6">{children}</Content>
+      <Content className="h-screen overflow-y-auto p-6">{children}</Content>
     </Layout>
   );
 }
