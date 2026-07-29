@@ -752,10 +752,14 @@ Service throw error ภาษาไทยที่ user เข้าใจได
   - 📝 commit: `feat(db): add conversation mode and full-text search index for legal chat retrieval`
   - ไม่ทำ semantic/embedding search รอบนี้ — คลังกฎหมายไทยเป็น citation-heavy (ผู้ใช้มักถามถึงเลขมาตรา/ชื่อกฎหมายตรงๆ) full-text/trigram พอสำหรับ v1 ถ้าคุณภาพไม่พอค่อยกลับมาเพิ่ม embedding column ทีหลัง (schema เผื่อไว้แล้วจาก design เดิม เพิ่มทีหลังได้โดยไม่ breaking)
 
-- [ ] 5.4 API: retrieval service
-  - `services/rag/retrievalService.ts`: รับคำถามผู้ใช้ → full-text query (`plainto_tsquery`) บน `Passage` join `Document`/`DocumentVersion` (filter `isLatest=true` เท่านั้น) → คืน top-K (K=8-10) เรียงตาม `ts_rank`
-  - exact-match fast path: ถ้า query มีรูปแบบ "มาตรา <เลข>" หรือชื่อกฎหมายตรงๆ ให้ query ตรงด้วย `sectionNumber`/`lawCode`/`title` (`ILIKE`) ควบคู่กับ full-text แล้ว merge ผลลัพธ์ (แม่นกว่า full-text ranking ล้วนๆ สำหรับ query ที่ระบุมาตราชัดเจน)
-  - format แต่ละ passage เป็นข้อความมีเลขกำกับ `[1] มาตรา 420 (พ.ร.บ. xxx): ...` ต่อกันเป็น context block เดียว
+- [x] 5.4 API: retrieval service
+  - `services/rag/retrievalService.ts`: รับคำถามผู้ใช้ → full-text query (`plainto_tsquery`) บน `Passage.searchVector` join `Document`/`DocumentVersion` (filter `isLatest=true` เท่านั้น) → top-K (K=10) เรียงตาม `ts_rank`
+  - exact-match fast path: ดึงเลขมาตราจาก query ด้วย regex (`มาตรา\s*([๐-๙0-9/]+)`, แปลงเลขไทย→อารบิกด้วย `thaiDigitsToArabic` จาก `@law-ai/core`) → query ตรงด้วย `sectionType='section' AND sectionNumber=X` ควบคู่กับ full-text แล้ว merge (exact ขึ้นก่อนเสมอ, dedupe ด้วย `passageId`)
+  - format แต่ละ passage เป็น `[n] มาตรา X (ชื่อกฎหมาย): เนื้อหา` ต่อกันเป็น `contextBlock` เดียว, เลข `n` ตรงกับลำดับใน `passages[]` array ที่คืนมาด้วย (ใช้ validate `[n]` ใน response ของโมเดลใน 5.5)
+  - ไม่ตัด title/lawCode ILIKE fast path ตามที่ระบุไว้ตอนแรก — ตัดสินใจว่า exact-match ที่เลขมาตราอย่างเดียวพอสำหรับ v1 เพราะ full-text ranking บน `simple` config จับชื่อกฎหมายที่พิมพ์มาในคำถามได้ดีอยู่แล้ว (คำในชื่อกฎหมายมักไม่ใช่ stopword)
+
+  - 🧪 test: `apps/api/tests/retrievalService.test.ts` (4 pass) — full-text คืนผลตรงเรียงตาม rank, ถามด้วย "มาตรา 7 พูดว่าอย่างไร" → exact-match ได้มาตรา 7 จริงขึ้นเป็นอันดับแรก, query ที่ไม่มีทางเจอ → คืน array ว่างไม่ throw, `contextBlock` format ตรงกับ `[1] label: content` ✅ | ไม่ mock อะไรเลยเพราะไม่มี external API เกี่ยวข้อง (เทสตรงกับ Postgres จริง, ข้อมูล ingest จาก Phase 4.2) | `bun test` (root) → 49 pass ไม่กระทบของเดิม ✅
+  - 📝 commit: `feat(api): full-text retrieval service for legal chat grounding`
 
 - [ ] 5.5 API: `legalChatCompletionService.ts` (ไฟล์ใหม่ ไม่แก้ `chatCompletionService.ts` เดิมของ Phase 3) + citation validation
   - ก่อนเรียก OpenRouter: retrieve top-K passages จากคำถามล่าสุดเสมอ (แชทกฎหมายบังคับค้นทุกครั้ง ต่างจากแชททั่วไปที่ไม่มี retrieval เลย) → ใส่เป็น context message ต่อจาก system prompt (ก่อนประวัติสนทนา — ตาม pattern "system prompt คงที่เป็น prefix, ส่วนที่เปลี่ยนไว้ท้ายสุด" ของ § AI/RAG Architecture ข้อ 5) → ถ้าค้นไม่เจอเลยให้ตอบว่าไม่พบข้อมูลในคลัง (ตาม system prompt ที่ CLAUDE.md กำหนดไว้ — "ห้ามคาดเดาหรือใช้ความรู้ทั่วไปนอก context")
