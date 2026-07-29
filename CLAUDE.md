@@ -713,30 +713,44 @@ Service throw error ภาษาไทยที่ user เข้าใจได
 > 1. **Embed/index ข้อมูลทั้งคลัง** ต้องทำแค่ครั้งเดียวตอน ingest (Phase 4.2 ทำไปแล้ว ไม่เกี่ยวกับตอนตอบคำถามเลย) ไม่ใช่สิ่งที่เกิดซ้ำทุกครั้งที่มีคนถามคำถาม — ส่วนนี้ไม่มีอะไรต้องแก้
 > 2. **Query ตอนค้นหาคำตอบ (retrieval)** เกิดขึ้นจริง 1 ครั้ง/คำถาม แต่ตัวที่ทำให้ "ช้า" ไม่ใช่เพราะ "อ่านซ้ำ" — เป็นเพราะ**ไม่มี index ที่เหมาะสม** ทำให้ Postgres ต้อง scan ทั้งตารางทุกครั้ง ถ้าใส่ GIN index (full-text) ให้ถูกต้อง query จะเร็วระดับ **มิลลิวินาที** ไม่ว่าคลังจะมีกี่พันมาตราก็ตาม — เร็วกว่าเวลาที่โมเดล LLM ใช้ตอบ (หลักวินาที) หลายพันเท่าอยู่แล้ว **ไม่จำเป็นต้องมี Redis สำหรับปัญหานี้** Redis จะช่วยได้จริงเฉพาะกรณี cache คำตอบของคำถามที่ "เหมือนเดิมทุกตัวอักษร" ซ้ำๆ (hit rate ต่ำสำหรับ chat ที่คำถามหลากหลาย) — ใส่เป็น stretch goal ไว้ท้าย task ไม่ใช่ requirement ของรอบนี้
 
-- [ ] 5.1 DB: `Conversation.mode` column + full-text search index บน `Passage.content` (ไม่ใช้ embedding/semantic search ในรอบนี้)
+- [ ] 5.1 DB + API: เลือกโมเดล AI เองได้ (ใช้ร่วมกันทั้งแชททั่วไปและแชทกฎหมาย)
+  - เพิ่ม model `AiModel`: `id`, `modelId` (OpenRouter model id string, `@unique`, เช่น `"anthropic/claude-opus-5"`), `label` (ชื่อโชว์ผู้ใช้ เช่น `"Claude Opus 5"`), `isActive Boolean @default(true)`, `sortOrder Int @default(0)`
+  - seed: ใส่โมเดลตัวอย่างอย่างน้อย 2-3 ตัว (ต้องเป็น model id ที่ใช้งานได้จริงบน OpenRouter — ตัวที่ตั้งใน `OPENROUTER_MODEL` ปัจจุบันต้องอยู่ในลิสต์ด้วยเสมอ กัน conversation เก่าที่ผูก modelTier ตัวนี้ไว้แล้วหา label โชว์ไม่เจอ)
+  - `GET /api/ai-models` — authGuard เท่านั้น, คืนเฉพาะ `isActive=true` เรียงตาม `sortOrder` — endpoint เดียวใช้ทั้งสองแชท ไม่ต้องแยก
+  - แก้ `conversationService.create`/`POST /api/conversations` (Phase 3.1) ให้รับ `modelId?: string` เพิ่ม (optional field, ไม่ breaking ของเดิม) — **ต้อง validate ว่าอยู่ใน `AiModel` ที่ `isActive=true` เท่านั้นก่อนใช้** (กัน client ส่ง string มั่วๆ ตรงเข้า OpenRouter) ไม่ส่งมา → fallback เป็น `env.OPENROUTER_MODEL` เหมือนเดิมทุกอย่าง (พฤติกรรมเดิมไม่เปลี่ยนถ้า client ไม่ส่ง `modelId`)
+  - โมเดลผูกกับ `Conversation` ตอนสร้างครั้งเดียว (schema เดิมมี `modelTier` เป็น per-conversation ไม่ใช่ per-message อยู่แล้ว) — หมายความว่า **เลือกโมเดลได้ตอนเริ่มบทสนทนาใหม่เท่านั้น เปลี่ยนกลางคันไม่ได้ในรอบนี้** (ถ้าต้องการเปลี่ยนโมเดลกลางบทสนทนาเป็น task แยกที่ซับซ้อนกว่านี้ ไม่ทำตอนนี้)
+  - แชทกฎหมาย (5.5) ใช้ mechanism เดียวกันเป๊ะ เพราะยังเป็น `Conversation.modelTier` field เดิม ไม่ต้องเขียนแยก
+
+- [ ] 5.2 Web: model picker (ใช้ component เดียวกันทั้งสองแชท)
+  - `modules/chat/services/modelApi.ts` — `GET /api/ai-models`
+  - `modules/chat/components/ModelSelect.tsx` (antd `Select`) — โชว์เฉพาะตอนยังไม่มี `activeConversationId` (แชทใหม่ที่ยังไม่ส่งข้อความแรก) เพราะเลือกได้แค่ตอนสร้างเท่านั้นตามข้อจำกัดใน 5.1 — ส่ง `modelId` ที่เลือกไปตอนเรียก `chatApi.create({ modelId })`
+  - ใช้ทั้งใน `ChatWindow.tsx` (แชททั่วไป) และหน้าแชทกฎหมายใหม่ (5.6) — component เดียวใช้ร่วมกัน ไม่สร้างซ้ำ
+
+- [ ] 5.3 DB: `Conversation.mode` column + full-text search index บน `Passage.content` (ไม่ใช้ embedding/semantic search ในรอบนี้)
   - `Conversation.mode String @default("general")` — migration แบบ additive มี default ไม่กระทบแถวเดิมที่มีอยู่แล้ว
   - เพิ่ม `tsvector` generated column (`to_tsvector('simple', content)` — ใช้ `simple` config ไม่ใช่ `thai`/`english` เพราะ Postgres ไม่มี Thai text search config ในตัว, `simple` ยัง tokenize คำ Thai ที่คั่นด้วยช่องว่าง/เครื่องหมายวรรคตอนได้) + GIN index บน column นั้น ผ่าน raw SQL migration (เหมือน pattern เดิมของ HNSW index ใน Phase 1)
   - เพิ่ม `pg_trgm` extension + trigram index เสริมสำหรับกรณีค้นคำที่ติดกัน ไม่มีช่องว่างคั่น (คำไทยส่วนใหญ่ไม่มีช่องว่างระหว่างคำ ตัด tsvector ด้วยช่องว่างอย่างเดียวไม่พอ)
   - ไม่ทำ semantic/embedding search รอบนี้ — คลังกฎหมายไทยเป็น citation-heavy (ผู้ใช้มักถามถึงเลขมาตรา/ชื่อกฎหมายตรงๆ) full-text/trigram พอสำหรับ v1 ถ้าคุณภาพไม่พอค่อยกลับมาเพิ่ม embedding column ทีหลัง (schema เผื่อไว้แล้วจาก design เดิม เพิ่มทีหลังได้โดยไม่ breaking)
 
-- [ ] 5.2 API: retrieval service
+- [ ] 5.4 API: retrieval service
   - `services/rag/retrievalService.ts`: รับคำถามผู้ใช้ → full-text query (`plainto_tsquery`) บน `Passage` join `Document`/`DocumentVersion` (filter `isLatest=true` เท่านั้น) → คืน top-K (K=8-10) เรียงตาม `ts_rank`
   - exact-match fast path: ถ้า query มีรูปแบบ "มาตรา <เลข>" หรือชื่อกฎหมายตรงๆ ให้ query ตรงด้วย `sectionNumber`/`lawCode`/`title` (`ILIKE`) ควบคู่กับ full-text แล้ว merge ผลลัพธ์ (แม่นกว่า full-text ranking ล้วนๆ สำหรับ query ที่ระบุมาตราชัดเจน)
   - format แต่ละ passage เป็นข้อความมีเลขกำกับ `[1] มาตรา 420 (พ.ร.บ. xxx): ...` ต่อกันเป็น context block เดียว
 
-- [ ] 5.3 API: `legalChatCompletionService.ts` (ไฟล์ใหม่ ไม่แก้ `chatCompletionService.ts` เดิมของ Phase 3) + citation validation
+- [ ] 5.5 API: `legalChatCompletionService.ts` (ไฟล์ใหม่ ไม่แก้ `chatCompletionService.ts` เดิมของ Phase 3) + citation validation
   - ก่อนเรียก OpenRouter: retrieve top-K passages จากคำถามล่าสุดเสมอ (แชทกฎหมายบังคับค้นทุกครั้ง ต่างจากแชททั่วไปที่ไม่มี retrieval เลย) → ใส่เป็น context message ต่อจาก system prompt (ก่อนประวัติสนทนา — ตาม pattern "system prompt คงที่เป็น prefix, ส่วนที่เปลี่ยนไว้ท้ายสุด" ของ § AI/RAG Architecture ข้อ 5) → ถ้าค้นไม่เจอเลยให้ตอบว่าไม่พบข้อมูลในคลัง (ตาม system prompt ที่ CLAUDE.md กำหนดไว้ — "ห้ามคาดเดาหรือใช้ความรู้ทั่วไปนอก context")
-  - system prompt คนละตัวกับแชททั่วไป — บังคับใส่เลข `[n]` กำกับทุกข้อความที่อ้างจาก context ตาม § AI/RAG Architecture ข้อ 3 พร้อม disclaimer ตามเงื่อนไข dataset ต้นทาง
+  - system prompt คนละตัวกับแชททั่วไป — ใส่ **persona นักกฎหมายมืออาชีพ** (เช่น "คุณคือนักกฎหมายผู้เชี่ยวชาญกฎหมายไทย ตอบด้วยความรอบคอบ แม่นยำ และใช้ศัพท์ทางกฎหมายที่ถูกต้องแบบมืออาชีพ") ไม่ใช่แค่ผู้ช่วยทั่วไปที่มีข้อมูลกฎหมายมาป้อนให้ — ควบคู่กับบังคับใส่เลข `[n]` กำกับทุกข้อความที่อ้างจาก context ตาม § AI/RAG Architecture ข้อ 3 พร้อม disclaimer ตามเงื่อนไข dataset ต้นทาง (persona ไม่ใช่ตัวลบล้าง disclaimer — ยังต้องบอกชัดว่าเป็นข้อมูลอ้างอิงเบื้องต้น ไม่ใช่คำแนะนำทางกฎหมายที่มีผลผูกพัน แม้จะตอบในน้ำเสียงมืออาชีพก็ตาม)
   - Backend parse `[n]` จาก response ที่ stream มา validate กับ passage ที่ retrieve จริงในรอบนั้น (Dev Standard #2) — เลขที่ไม่ตรง/เกินขอบเขตตัดทิ้งก่อนบันทึก
   - เก็บ citations ที่ validate แล้วลง `Message.citations` (field มีอยู่แล้วใน schema เดิม ไม่ต้อง migrate)
+  - ยังใช้ `conversation.modelTier` เดิมเรียก OpenRouter (ผูกกับ 5.1) — ผู้ใช้เลือกโมเดลตอนสร้างแชทกฎหมายใหม่ได้เหมือนแชททั่วไป
   - route แยก `POST /api/legal-conversations/:id/messages` (หรือ reuse `/api/conversations/:id/messages` เดิมแล้ว branch ตาม `conversation.mode` ข้างใน — เลือกตอน implement จริงตามที่ diff เล็กกว่า)
 
-- [ ] 5.4 Web: เมนู + หน้า "แชทกฎหมาย" แยกจาก "แชท"
+- [ ] 5.6 Web: เมนู + หน้า "แชทกฎหมาย" แยกจาก "แชท"
   - เพิ่มเมนู `legal-chat` ใน `Sidebar.tsx`/`ROUTES` (เมนูใหม่ ต้อง seed `RolePermission` เพิ่มด้วย) + route ใหม่ (เช่น `/legal-chat`) — ไม่แก้ route/หน้า `/` (แชททั่วไป) เลย
-  - reuse component จาก `modules/chat/` เท่าที่ทำได้ (`MessageThread`, `MarkdownMessage`, `ChatInput` — UI เหมือนกันแค่ endpoint/mode ต่าง) สร้างเฉพาะส่วนที่ต่างจริงๆ เป็นของใหม่: แสดง `[n]` เป็นลิงก์/badge คลิกไปดู passage ต้นฉบับได้ (เปิด modal หรือลิงก์ไป `/library` ของเอกสารนั้น)
+  - reuse component จาก `modules/chat/` เท่าที่ทำได้ (`MessageThread`, `MarkdownMessage`, `ChatInput`, `ModelSelect` จาก 5.2 — UI เหมือนกันแค่ endpoint/mode ต่าง) สร้างเฉพาะส่วนที่ต่างจริงๆ เป็นของใหม่: แสดง `[n]` เป็นลิงก์/badge คลิกไปดู passage ต้นฉบับได้ (เปิด modal หรือลิงก์ไป `/library` ของเอกสารนั้น)
 
-- [ ] 5.5 (stretch, ไม่บังคับรอบนี้) Redis cache สำหรับคำถามซ้ำเป๊ะ
-  - เฉพาะกรณีอยาก optimize เพิ่มหลัง 5.1-5.4 ใช้งานจริงแล้วเจอว่าจำเป็น — cache key = hash ของคำถาม (normalize whitespace/case) → cache ผลลัพธ์ retrieval (ไม่ cache คำตอบ LLM ทั้งข้อความ เพราะ context สนทนาก่อนหน้าต่างกันทำให้คำตอบไม่เหมือนกันได้แม้คำถามล่าสุดจะซ้ำ)
+- [ ] 5.7 (stretch, ไม่บังคับรอบนี้) Redis cache สำหรับคำถามซ้ำเป๊ะ
+  - เฉพาะกรณีอยาก optimize เพิ่มหลัง 5.3-5.6 ใช้งานจริงแล้วเจอว่าจำเป็น — cache key = hash ของคำถาม (normalize whitespace/case) → cache ผลลัพธ์ retrieval (ไม่ cache คำตอบ LLM ทั้งข้อความ เพราะ context สนทนาก่อนหน้าต่างกันทำให้คำตอบไม่เหมือนกันได้แม้คำถามล่าสุดจะซ้ำ)
 
 ---
 
