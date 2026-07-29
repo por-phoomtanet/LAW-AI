@@ -759,7 +759,9 @@ Service throw error ภาษาไทยที่ user เข้าใจได
 
 - [ ] 5.6 Web: เมนู + หน้า "แชทกฎหมาย" แยกจาก "แชท"
   - เพิ่มเมนู `legal-chat` ใน `Sidebar.tsx`/`ROUTES` (เมนูใหม่ ต้อง seed `RolePermission` เพิ่มด้วย) + route ใหม่ (เช่น `/legal-chat`) — ไม่แก้ route/หน้า `/` (แชททั่วไป) เลย
-  - reuse component จาก `modules/chat/` เท่าที่ทำได้ (`MessageThread`, `MarkdownMessage`, `ChatInput`, `ModelSelect` จาก 5.2 — UI เหมือนกันแค่ endpoint/mode ต่าง) สร้างเฉพาะส่วนที่ต่างจริงๆ เป็นของใหม่: แสดง `[n]` เป็นลิงก์/badge คลิกไปดู passage ต้นฉบับได้ (เปิด modal หรือลิงก์ไป `/library` ของเอกสารนั้น)
+  - reuse component จาก `modules/chat/` เท่าที่ทำได้ (`MessageThread`, `MarkdownMessage`, `ChatInput`, `ModelSelect` จาก 5.2 — UI เหมือนกันแค่ endpoint/mode ต่าง)
+  - **แผงอ้างอิงด้านข้าง** (ตามภาพตัวอย่างที่ผู้ใช้ส่งมา — คอลัมน์ขวาแยกจาก thread หลัก ไม่ใช่แค่ modal/link): ต่อ 1 ข้อความของ assistant ที่มี citations โชว์การ์ด "แหล่งอ้างอิงคำตอบ" 1 ใบต่อ `[n]` ที่ validate แล้ว มีเลขกำกับ (`[1]`, `[2]`...) ตรงกับที่ปรากฏในเนื้อความ + ชื่อกฎหมาย/มาตรา + เนื้อหาเต็มของ passage นั้นแบบ expand/collapse ได้ — คลิกเลข `[n]` ในเนื้อความให้ scroll/highlight ไปยังการ์ดที่ตรงกันในแผงขวา (เหมือน anchor jump ของ TOC ใน `/library` ที่ทำไว้แล้วใน Phase 4.4)
+  - component ใหม่: `CitationPanel.tsx` (แผงขวา) + `CitationBadge.tsx` (เลข `[n]` ในเนื้อความ, คลิกได้) — ข้อมูล citations มาจาก `Message.citations` ที่ backend validate ไว้แล้วใน 5.5 (มี `documentId`/`passageId`/`citedText`/`chunkIndex` เท่าที่ field เดิมรองรับ)
 
 - [ ] 5.7 (stretch, ไม่บังคับรอบนี้) Redis cache สำหรับคำถามซ้ำเป๊ะ
   - เฉพาะกรณีอยาก optimize เพิ่มหลัง 5.3-5.6 ใช้งานจริงแล้วเจอว่าจำเป็น — cache key = hash ของคำถาม (normalize whitespace/case) → cache ผลลัพธ์ retrieval (ไม่ cache คำตอบ LLM ทั้งข้อความ เพราะ context สนทนาก่อนหน้าต่างกันทำให้คำตอบไม่เหมือนกันได้แม้คำถามล่าสุดจะซ้ำ)
