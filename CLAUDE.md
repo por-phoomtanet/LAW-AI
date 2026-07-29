@@ -693,9 +693,13 @@ Service throw error ภาษาไทยที่ user เข้าใจได
   - 🧪 test: `apps/api/tests/documents.test.ts` (5 pass) — 401 ไม่มี token, list คืน category counts ครบ 2 หมวด + filter `docType` ได้ถูกต้อง, detail คืน TOC tree ที่ทุก node มี `children` เป็น array, id ไม่มีจริง → 404 ✅ | `bun test` (root) → 41 pass ไม่กระทบของเดิม ✅ | live curl ผ่าน `docker compose` จริง — list เห็น 117/35 หมวดหลัก/รอง, detail ของ พ.ร.บ.สถาบันบัณฑิตพัฒนบริหารศาสตร์ 2562 เห็น `หมวด ๑` ผูกลูกมาตรา 7-18 ถูกต้องครบ 12 มาตรา ✅
   - 📝 commit: `feat(api): law library browse endpoints with category counts and toc tree`
 
-- [ ] 4.4 Web: หน้า browse คลังกฎหมาย
-  - แทนที่ placeholder `/library` เดิม — ซ้าย: sidebar หมวดหมู่พร้อมจำนวน (เหมือนภาพตัวอย่าง), กลาง/ขวา: รายการเอกสาร + panel รายละเอียดที่มี TOC tree ยุบ/ขยายได้ (หมวด→ส่วนที่→มาตรา) คลิกมาตราแล้วเลื่อนไปเนื้อหา
-  - ใช้ Ant Design (Table/Tree/List) ได้ตาม Dev Standard ปกติ — ต่างจากหน้า chat ที่เป็น custom component ทั้งหมด
+- [x] 4.4 Web: หน้า browse คลังกฎหมาย
+  - แทนที่ placeholder `LibraryPageContent.tsx` เดิม — 3 คอลัมน์: `CategorySidebar.tsx` (antd `Tree` 2 ชั้น หมวดใหญ่→docType ย่อยพร้อมจำนวน, คลิก docType เพื่อ filter), `DocumentList.tsx` (antd `List`, คลิกเลือกเอกสาร), `DocumentDetail.tsx` (antd `Tree` เป็น TOC + render เนื้อหาเต็มเอกสารต่อเนื่องเป็น flat list ตามลำดับ ไม่ใช่โชว์ทีละมาตรา — คลิก TOC node แล้ว `scrollIntoView` ไปยัง anchor ของมาตรานั้น ตรงตาม spec "คลิกมาตราแล้วเลื่อนไปเนื้อหา")
+  - ใช้ Ant Design ปกติ (light theme) ตาม Dev Standard — ตรงข้ามกับหน้า chat ที่เป็น custom dark component ทั้งหมด ไม่ปนกัน
+  - หน้านี้ยังไม่ตัด scope RolePermission เพิ่ม — ใช้ `PermissionGuard menuKey="library"` เดิมที่มีอยู่แล้ว
+
+  - 🧪 test: `bunx tsc --noEmit` → ผ่านไม่มี type error ✅ | `docker compose up -d --build web` → build สำเร็จ, container healthy ✅ | curl `/library` → 200 ไม่มี server-render error ✅ | **การคลิก tree/scroll จริงบนหน้าจอยังไม่ยืนยันด้วย browser จริง** (ไม่มี browser tool ใน environment นี้) — ข้อมูล/hierarchy ที่ endpoint ส่งมาถูกยืนยันถูกต้องแล้วด้วย curl ตรงใน 4.3
+  - 📝 commit: `feat(web): law library browse page with category sidebar and toc tree`
 
 ---
 
