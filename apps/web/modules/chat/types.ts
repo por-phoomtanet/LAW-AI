@@ -1,3 +1,8 @@
+export interface AiModelOption {
+  modelId: string;
+  label: string;
+}
+
 export interface ConversationSummary {
   id: number;
   title: string | null;

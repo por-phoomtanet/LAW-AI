@@ -8,10 +8,12 @@ import { useChatStore } from "@/store/chatStore";
 import ConversationList from "./ConversationList";
 import MessageThread from "./MessageThread";
 import ChatInput from "./ChatInput";
+import ModelSelect from "./ModelSelect";
 
 export default function ChatWindow() {
   const [loadingList, setLoadingList] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const conversations = useChatStore((state) => state.conversations);
   const activeConversationId = useChatStore((state) => state.activeConversationId);
   const setConversations = useChatStore((state) => state.setConversations);
@@ -39,6 +41,7 @@ export default function ChatWindow() {
   function handleNewConversation() {
     setActiveConversation(null);
     setMessages([]);
+    setSelectedModelId(null);
     setDrawerOpen(false);
   }
 
@@ -46,7 +49,7 @@ export default function ChatWindow() {
     let conversationId = activeConversationId;
     // ยังไม่มีบทสนทนาที่เลือกอยู่ (ข้อความแรกสุด) → สร้าง conversation ก่อน แล้วค่อยส่ง path เดียวกับข้อความถัดๆ ไป
     if (!conversationId) {
-      const conversation = await chatApi.create();
+      const conversation = await chatApi.create(selectedModelId ?? undefined);
       upsertConversation(conversation);
       setActiveConversation(conversation.id);
       conversationId = conversation.id;
@@ -111,13 +114,20 @@ export default function ChatWindow() {
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="mb-1 flex items-center justify-between md:mb-2">
           <h1 className="text-lg font-medium text-gray-100">แชท</h1>
-          <button
-            type="button"
-            onClick={() => setDrawerOpen(true)}
-            className="text-gray-400 transition-colors hover:text-gray-100 md:hidden"
-          >
-            ☰
-          </button>
+          <div className="flex items-center gap-2">
+            {/* เลือกโมเดลได้แค่ตอนยังไม่มีบทสนทนา (ยังไม่ส่งข้อความแรก) — หลังสร้างแล้ว
+                modelTier ผูกกับ conversation ถาวร เปลี่ยนกลางคันไม่ได้ (ดู Phase 5.1) */}
+            {activeConversationId == null && (
+              <ModelSelect value={selectedModelId} onChange={setSelectedModelId} />
+            )}
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(true)}
+              className="text-gray-400 transition-colors hover:text-gray-100 md:hidden"
+            >
+              ☰
+            </button>
+          </div>
         </div>
         <MessageThread />
         {error && <div className="px-2 pb-2 text-sm text-red-400">{error}</div>}

@@ -10,8 +10,11 @@ export const chatApi = {
     return response.data.data;
   },
 
-  async create(): Promise<ConversationSummary> {
-    const response = await api.post<ApiResponse<ConversationSummary>>("/api/conversations");
+  async create(modelId?: string): Promise<ConversationSummary> {
+    const response = await api.post<ApiResponse<ConversationSummary>>(
+      "/api/conversations",
+      modelId ? { modelId } : undefined,
+    );
     return response.data.data;
   },
 

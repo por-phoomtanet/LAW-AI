@@ -728,10 +728,15 @@ Service throw error ภาษาไทยที่ user เข้าใจได
   - 🧪 test: `apps/api/tests/aiModels.test.ts` (2 pass) + เพิ่มเคสใน `conversations.test.ts` (create ด้วย valid modelId ใช้โมเดลนั้นจริง, create ด้วย modelId ปลอม → 400) → `bun test` รวม 45 pass ✅ | live curl ผ่าน `docker compose` จริง — list เห็น 3 โมเดล, create ไม่ส่ง body ได้โมเดล default, create ส่ง `modelId` ถูกต้องได้โมเดลนั้นจริง, ส่ง `modelId` ปลอม → 400 ✅
   - 📝 commit: `feat(api): let users pick an ai model, backed by an AiModel table`
 
-- [ ] 5.2 Web: model picker (ใช้ component เดียวกันทั้งสองแชท)
+- [x] 5.2 Web: model picker (ใช้ component เดียวกันทั้งสองแชท)
   - `modules/chat/services/modelApi.ts` — `GET /api/ai-models`
-  - `modules/chat/components/ModelSelect.tsx` (antd `Select`) — โชว์เฉพาะตอนยังไม่มี `activeConversationId` (แชทใหม่ที่ยังไม่ส่งข้อความแรก) เพราะเลือกได้แค่ตอนสร้างเท่านั้นตามข้อจำกัดใน 5.1 — ส่ง `modelId` ที่เลือกไปตอนเรียก `chatApi.create({ modelId })`
-  - ใช้ทั้งใน `ChatWindow.tsx` (แชททั่วไป) และหน้าแชทกฎหมายใหม่ (5.6) — component เดียวใช้ร่วมกัน ไม่สร้างซ้ำ
+  - `modules/chat/components/ModelSelect.tsx` (antd `Select`, styled มืดให้เข้ากับ chat panel — `styles.popup.root`/`style` background `#1e1f20`) — โชว์เฉพาะตอน `activeConversationId == null` (แชทใหม่ที่ยังไม่ส่งข้อความแรก) เพราะเลือกได้แค่ตอนสร้างเท่านั้นตามข้อจำกัดใน 5.1 — เลือกไว้แล้วส่ง `modelId` ไปตอนเรียก `chatApi.create(modelId)`
+  - `ChatWindow.tsx`: เพิ่ม `selectedModelId` state, โชว์ `ModelSelect` ในแถบหัวข้อข้าง "แชท" เฉพาะตอนยังไม่มีบทสนทนา, reset กลับเป็น `null` (ใช้ default จาก env) ทุกครั้งที่กด "+ บทสนทนาใหม่"
+  - `chatApi.create()` แก้ให้รับ `modelId?: string` ส่งต่อเป็น body ไปตอนเรียก API (ไม่ส่ง → `undefined`, axios ไม่แนบ body เหมือนพฤติกรรมเดิม)
+  - จะ reuse component นี้ในหน้าแชทกฎหมายใหม่ (5.6) — ยังไม่ได้ทำตอนนี้เพราะหน้านั้นยังไม่มี
+
+  - 🧪 test: `bunx tsc --noEmit` → ผ่านไม่มี type error ✅ | `docker compose up -d --build web` → build สำเร็จ, container healthy ✅ | API layer (การส่ง `modelId` จริง) ยืนยันแล้วผ่าน curl ใน 5.1 — **การเลือกโมเดลจริงบนหน้าจอ (dropdown แสดง/dark styling ถูกต้อง) ยังไม่ยืนยันด้วย browser จริง**
+  - 📝 commit: `feat(web): add ai model picker to chat window`
 
 - [ ] 5.3 DB: `Conversation.mode` column + full-text search index บน `Passage.content` (ไม่ใช้ embedding/semantic search ในรอบนี้)
   - `Conversation.mode String @default("general")` — migration แบบ additive มี default ไม่กระทบแถวเดิมที่มีอยู่แล้ว
