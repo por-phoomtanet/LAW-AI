@@ -673,12 +673,15 @@ Service throw error ภาษาไทยที่ user เข้าใจได
 
   - 📝 commit: `feat(db): add document/documentversion/passage models for law library browse`
 
-- [ ] 4.2 Ingestion script: `packages/ingestion` (ดาวน์โหลด + parse + upsert)
-  - Port `packages/ingestion/src/{ingestOcsKrisdika.ts, sources/ocsKrisdika.ts}` และ `packages/core/src/documentCategory.ts` จาก `chore/trim-schema-phase-1-2` — ตัด `ratchakitchaFallback.ts` ออก (ตามหมายเหตุ scope ข้างบน — record ที่ `sections` ว่างให้ skip พร้อม log แทน)
-  - `deriveDocType(title)`: match title prefix ตามลำดับที่ตรวจสอบแล้วจากข้อมูลจริง (285 ฉบับปี 2019 ครบทุก docType) — ต้องเช็ค `"พระราชบัญญัติประกอบรัฐธรรมนูญ"` ก่อน `"พระราชบัญญัติ"` เสมอ (prefix ซ้อนกัน `startsWith` ผิดลำดับจะ match ผิด)
-  - ดาวน์โหลดจาก `https://huggingface.co/datasets/open-law-data-thailand/ocs-krisdika/resolve/main/data/{year}/{year}-{month}.jsonl` เหมือนเดิม — ไม่ต้องมี HF token (public dataset)
-  - error ต่อ record (เช่น embeddings API หมด credit) ต้องไม่ทำให้ record อื่นในเดือนเดียวกัน fail ไปด้วย — เก็บ error list รายงานแทนการ throw ทิ้งทั้ง batch (pattern เดิมจาก `IngestResult.errors`)
-  - CLI runner (`runIngest.ts`) รับ range ปี/เดือน — เริ่ม ingest ปีตัวอย่าง 1 ปีก่อน (ไม่ทำทั้ง dataset ในรอบแรก)
+- [x] 4.2 Ingestion script: `packages/ingestion` (ดาวน์โหลด + parse + upsert)
+  - Port `packages/ingestion/src/{ingestOcsKrisdika.ts, sources/ocsKrisdika.ts}` เป็น `packages/core` ใหม่ (`documentCategory.ts`, `thai.ts`) จาก `chore/trim-schema-phase-1-2` — ตัด `ratchakitchaFallback.ts` และ embedding logic ทั้งหมดออก (ตาม scope ที่ตัดสินใจไว้ — record ที่ `sections` ว่างถูก skip พร้อมนับใน `passagesSkippedNoSections`)
+  - `deriveDocType(title)` + `categorizeDocType()` (เพิ่มใหม่ ไม่มีในต้นฉบับ — ใช้แยก primary/subordinate จาก docType ที่เก็บไว้แล้ว สำหรับ 4.3)
+  - CLI runner (`runIngest.ts`) รับ `<year> <month>` — ทดสอบสดจริงกับ `bun run ingest <year> <month>`
+  - **verify กับข้อมูลจริงเพิ่มเติม (ไม่ได้อยู่ใน scope เดิมแต่จำเป็นต้องเช็คก่อนเชื่อว่า port ถูก)**: sample เดือน 2024-01/2019-01 ที่ทดสอบตอนแรกบังเอิญมีแต่ `กฎกระทรวง` ซึ่งใช้ `sectionTypeId` คนละชุดกับที่ map ไว้ (ตกไปเป็น `"other"` หมด ไม่ใช่บั๊ก — กฎกระทรวงใช้ "ข้อ" ไม่ใช่ "มาตรา/หมวด") ดาวน์โหลด raw JSONL หลายเดือนมาเช็คตรงจนเจอ `พระราชบัญญัติ` จริง (2018-05, 2021-11) ยืนยันว่า `sectionTypeId` mapping (`1,2,3,4,8,13,14,15`) ถูกต้องตรงกับที่อ้างไว้ — TOC hierarchy ใช้งานได้เต็มรูปแบบเฉพาะ "กฎหมายหลัก" (พ.ร.บ./ประมวลกฎหมาย) ส่วนกฎหมายลำดับรองจะเป็น flat list (ไม่ใช่ regression เพราะปกติกฎหมายลำดับรองก็ไม่มีโครงสร้างหมวด/ส่วนลึกอยู่แล้ว)
+  - ingest จริง full year 2019 (12 เดือน) ผ่าน `bun run ingest` เพื่อสร้าง demo corpus — **152 documents, 191 versions, 7,616 passages, 0 errors**
+
+  - 🧪 test: `packages/ingestion/tests/ingestOcsKrisdika.test.ts` (6 pass) — hierarchy ผูก parentId ถูก (มาตราลูกของหมวด), dedupe เห็น contentHash ตรงเดิม, เพิ่มเวอร์ชันใหม่ → isLatest ของเวอร์ชันเก่าถูกตั้ง false อัตโนมัติ, **real-world bug regression test**: raw dataset ประกาศ `is_latest:true` พร้อมกันทุก record → ต้องเหลือ isLatest จริงแค่ 1 ตัวจาก timeline_code suffix สูงสุด ไม่ขึ้นกับลำดับประมวลผล, sections ว่าง/blank ไม่ throw ✅ | `bun test` (root, ทั้ง monorepo) → 42 pass ไม่กระทบ suite เดิม ✅ | ingest จริง 12 เดือนสำเร็จ 0 errors ✅
+  - 📝 commit: `feat(ingestion): port ocs-krisdika parser and ingest law library corpus`
 
 - [ ] 4.3 API: browse endpoints
   - `GET /api/documents` — list พร้อม filter `docType`, group นับจำนวนต่อหมวด (กฎหมายหลัก/กฎหมายลำดับรอง จาก `packages/core/src/documentCategory.ts`'s `PRIMARY_LAW_TYPES`/`SUBORDINATE_LAW_TYPES`) สำหรับ sidebar ซ้ายแบบภาพตัวอย่าง fourcorners.law

@@ -1,0 +1,13 @@
+{
+  "name": "@law-ai/ingestion",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "ingest": "bun --env-file=../../.env run src/runIngest.ts",
+    "test": "bun --env-file=../../.env test"
+  },
+  "dependencies": {
+    "@law-ai/core": "workspace:*",
+    "@law-ai/db": "workspace:*"
+  }
+}
