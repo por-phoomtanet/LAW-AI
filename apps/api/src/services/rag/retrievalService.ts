@@ -88,10 +88,30 @@ export const retrievalService = {
         `
       : [];
 
-    // merge เอา exact match ขึ้นก่อนเสมอ, dedupe ด้วย passageId, cap ที่ TOP_K
+    // pg_trgm fallback — 'simple' tsvector ตัดคำแค่ตามช่องว่าง/วรรคตอน ไม่มี Thai word
+    // segmentation จริง ถ้าผู้ใช้พิมพ์คำติดกันคนละจุดกับที่ตัวบทต้นฉบับมีช่องว่างคั่นไว้
+    // (เช่น พิมพ์ "พระราชบัญญัติกองทุนน้ำมันเชื้อเพลิง" ทั้งที่ตัวบทเก็บเป็น "พระราชบัญญัติ กองทุนน้ำมันเชื้อเพลิง"
+    // สองคำแยกกัน) full-text search ข้างบนจะไม่แมตช์อะไรเลยแม้เอกสารจะมีอยู่จริง — word_similarity
+    // เทียบ character trigram แทน token identity เลยไม่สนใจว่าช่องว่างอยู่ตรงไหน (index
+    // Passage_content_trgm_idx มีอยู่แล้วจาก migration Phase 5.3 แต่ไม่เคยถูกใช้จริงจนตอนนี้)
+    const trigramRows = await prisma.$queryRaw<RawPassageRow[]>`
+      SELECT p.id as "passageId", d.id as "documentId", d.title as "documentTitle",
+             p."sectionType" as "sectionType", p."sectionNumber" as "sectionNumber",
+             p.content as "content"
+      FROM "Passage" p
+      JOIN "DocumentVersion" v ON v.id = p."versionId"
+      JOIN "Document" d ON d.id = v."documentId"
+      WHERE v."isLatest" = true
+        AND word_similarity(${query}, p.content) > 0.3
+      ORDER BY word_similarity(${query}, p.content) DESC
+      LIMIT ${TOP_K}
+    `;
+
+    // merge เอา exact match ขึ้นก่อนเสมอ ตามด้วย full-text แล้วค่อย trigram (fuzzy สุด priority
+    // ต่ำสุด), dedupe ด้วย passageId, cap ที่ TOP_K
     const seen = new Set<number>();
     const merged: RawPassageRow[] = [];
-    for (const row of [...exactRows, ...fullTextRows]) {
+    for (const row of [...exactRows, ...fullTextRows, ...trigramRows]) {
       if (seen.has(row.passageId)) continue;
       seen.add(row.passageId);
       merged.push(row);
