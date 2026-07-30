@@ -7,7 +7,7 @@
     "test": "bun --env-file=../../.env test"
   },
   "dependencies": {
-    "@law-ai/core": "workspace:*",
-    "@law-ai/db": "workspace:*"
+    "@law-ai/core": "*",
+    "@law-ai/db": "*"
   }
 }

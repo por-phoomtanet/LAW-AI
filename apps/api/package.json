@@ -11,8 +11,8 @@
   "dependencies": {
     "@elysiajs/cors": "^1.2.0",
     "@elysiajs/jwt": "^1.2.0",
-    "@law-ai/core": "workspace:*",
-    "@law-ai/db": "workspace:*",
+    "@law-ai/core": "*",
+    "@law-ai/db": "*",
     "elysia": "^1.2.10",
     "openai": "^4.77.0"
   },
