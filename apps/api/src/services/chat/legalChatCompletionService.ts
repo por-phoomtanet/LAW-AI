@@ -103,6 +103,29 @@ export const legalChatCompletionService = {
         let modelUsed = conversation.modelTier;
         let finishReason: string | null | undefined;
 
+        // ถ้า client ตัดการเชื่อมต่อกลางทาง (ปิดแท็บ/navigate ออก) runtime จะ tear down controller
+        // เอง — enqueue/close รอบถัดไปจะ throw "Controller is already closed" ป้องกันด้วย flag นี้
+        // แทนที่จะปล่อยให้ throw ซ้ำสองรอบ (ทั้งใน try และซ้ำอีกทีใน catch เอง — ไม่มี try ครอบ
+        // catch จึงกลายเป็น unhandled rejection ที่ทำให้ process crash จริงตามที่เจอใน production log)
+        let closed = false;
+        function safeEnqueue(chunk: Uint8Array) {
+          if (closed) return;
+          try {
+            controller.enqueue(chunk);
+          } catch {
+            closed = true;
+          }
+        }
+        function safeClose() {
+          if (closed) return;
+          closed = true;
+          try {
+            controller.close();
+          } catch {
+            // client หายไปแล้ว ไม่มีอะไรต้องทำต่อ
+          }
+        }
+
         try {
           const completion = await openrouter.chat.completions.create({
             model: conversation.modelTier,
@@ -117,7 +140,7 @@ export const legalChatCompletionService = {
             const delta = chunk.choices[0]?.delta?.content;
             if (delta) {
               fullText += delta;
-              controller.enqueue(encoder.encode(sseEvent({ delta })));
+              safeEnqueue(encoder.encode(sseEvent({ delta })));
             }
             if (chunk.choices[0]?.finish_reason) {
               finishReason = chunk.choices[0].finish_reason;
@@ -125,15 +148,15 @@ export const legalChatCompletionService = {
           }
         } catch (error) {
           console.error("[legalChatCompletionService] stream error:", error);
-          controller.enqueue(encoder.encode(sseEvent({ error: GENERIC_ERROR_MESSAGE })));
-          controller.close();
+          safeEnqueue(encoder.encode(sseEvent({ error: GENERIC_ERROR_MESSAGE })));
+          safeClose();
           return;
         }
 
         if (finishReason && finishReason !== "stop") {
           console.error("[legalChatCompletionService] non-stop finish_reason:", finishReason);
-          controller.enqueue(encoder.encode(sseEvent({ error: GENERIC_ERROR_MESSAGE })));
-          controller.close();
+          safeEnqueue(encoder.encode(sseEvent({ error: GENERIC_ERROR_MESSAGE })));
+          safeClose();
           return;
         }
 
@@ -149,8 +172,12 @@ export const legalChatCompletionService = {
         await conversationRepository.touchUpdatedAt(conversationId);
         await conversationRepository.setTitleIfEmpty(conversationId, userContent.slice(0, 60));
 
-        controller.enqueue(encoder.encode(sseEvent({ done: true, citations })));
-        controller.close();
+        safeEnqueue(encoder.encode(sseEvent({ done: true, citations })));
+        safeClose();
+      },
+      cancel() {
+        // client ตัดการเชื่อมต่อ — ไม่มีอะไรต้องทำที่นี่ (safeEnqueue/safeClose ข้างในกัน throw
+        // ไว้แล้วจากฝั่ง enqueue เอง) ระบุ handler ไว้เฉยๆ เพื่อไม่ให้ runtime ถือว่าไม่มีใครจัดการ
       },
     });
 
