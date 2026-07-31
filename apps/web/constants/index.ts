@@ -2,8 +2,8 @@ export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://loca
 
 export const ROUTES = {
   login: "/login",
-  chat: "/",
-  legalChat: "/legal-chat",
+  chat: "/chat",
+  legalChat: "/",
   library: "/library",
   users: "/users",
   settings: "/settings",

@@ -26,7 +26,7 @@ export function useLogin() {
       // เจอ waterfall (sidebar/guard ต้องรอ permissions ก่อนถึงจะ render ถูก)
       const permissions = await rolePermissionApi.getByRole(user.role);
       setPermissions(permissions);
-      router.push(ROUTES.chat);
+      router.push(ROUTES.legalChat);
     } catch (err) {
       const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined;
       setError(message ?? "เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");

@@ -1,5 +1,5 @@
-import ChatWindow from "@/modules/chat/components/ChatWindow";
+import LegalChatWindow from "@/modules/chat/components/LegalChatWindow";
 
 export default function Home() {
-  return <ChatWindow />;
+  return <LegalChatWindow />;
 }

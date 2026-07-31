@@ -28,13 +28,16 @@ export default function Sidebar() {
 
   // filter ตาม permission จริงจาก store — ไม่ hardcode role name (ตาม Dev Standard #11)
   const visibleItems = useMemo(() => MENU_ITEMS.filter((item) => canView(item.menuKey)), [canView]);
+  // ไฮไลต์เมนูตาม route ที่ตรงกับ pathname จริง (ก่อนหน้านี้เทียบ pathname กับ item.key ตรงๆ
+  // ซึ่งไม่มีทางตรงกันเลย เช่น pathname="/" แต่ key="legal-chat" — ไม่เคยไฮไลต์อะไรเลยแม้แต่ครั้งเดียว)
+  const selectedKey = visibleItems.find((item) => item.route === pathname)?.key;
 
   return (
     <Menu
       theme="dark"
       mode="inline"
       style={{ background: "#131314" }}
-      selectedKeys={[pathname]}
+      selectedKeys={selectedKey ? [selectedKey] : []}
       onClick={({ key }) => {
         const item = visibleItems.find((i) => i.key === key);
         if (item) router.push(item.route);
