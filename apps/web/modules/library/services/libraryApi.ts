@@ -10,8 +10,10 @@ export const libraryApi = {
     return response.data.data;
   },
 
-  async get(id: number): Promise<DocumentDetail> {
-    const response = await api.get<ApiResponse<DocumentDetail>>(`/api/documents/${id}`);
+  async get(id: number, versionId?: number): Promise<DocumentDetail> {
+    const response = await api.get<ApiResponse<DocumentDetail>>(`/api/documents/${id}`, {
+      params: versionId ? { versionId } : undefined,
+    });
     return response.data.data;
   },
 };

@@ -86,4 +86,44 @@ describe("Document browse API (Phase 4.3)", () => {
     const response = await authedRequest("/api/documents/999999999", token);
     expect(response.status).toBe(404);
   });
+
+  test("get detail includes versions list, and requesting a specific versionId returns that version", async () => {
+    const listResponse = await authedRequest("/api/documents?docType=พระราชบัญญัติ", token);
+    const listBody = await listResponse.json();
+    const target = listBody.data.documents[0];
+
+    const defaultResponse = await authedRequest(`/api/documents/${target.id}`, token);
+    const defaultBody = await defaultResponse.json();
+
+    expect(Array.isArray(defaultBody.data.versions)).toBe(true);
+    expect(defaultBody.data.versions.length).toBeGreaterThan(0);
+    // ไม่ระบุ versionId → ต้องได้เวอร์ชันที่ isLatest=true
+    const latestMeta = defaultBody.data.versions.find((v: { isLatest: boolean }) => v.isLatest);
+    expect(defaultBody.data.version.id).toBe(latestMeta.id);
+
+    // ระบุ versionId ตรงๆ (เอาตัวแรกในลิสต์ ไม่ว่าจะเป็นเวอร์ชันไหน) → ต้องได้เวอร์ชันนั้นกลับมาจริง
+    const someVersionId = defaultBody.data.versions[0].id;
+    const specificResponse = await authedRequest(
+      `/api/documents/${target.id}?versionId=${someVersionId}`,
+      token,
+    );
+    const specificBody = await specificResponse.json();
+    expect(specificResponse.status).toBe(200);
+    expect(specificBody.data.version.id).toBe(someVersionId);
+  });
+
+  test("get detail with versionId belonging to a different document → 404", async () => {
+    const listResponse = await authedRequest("/api/documents?docType=พระราชบัญญัติ", token);
+    const listBody = await listResponse.json();
+    const [docA, docB] = listBody.data.documents;
+
+    const docBDetail = await (await authedRequest(`/api/documents/${docB.id}`, token)).json();
+    const foreignVersionId = docBDetail.data.version.id;
+
+    const response = await authedRequest(
+      `/api/documents/${docA.id}?versionId=${foreignVersionId}`,
+      token,
+    );
+    expect(response.status).toBe(404);
+  });
 });

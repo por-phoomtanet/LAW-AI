@@ -72,14 +72,27 @@ export const documentService = {
     };
   },
 
-  async getDetail(id: number) {
-    const document = await documentRepository.findByIdWithLatestVersion(id);
+  // versionId ไม่ระบุ → ใช้เวอร์ชันล่าสุด (isLatest) เหมือนพฤติกรรมเดิม — ระบุมาเพื่อย้อนดู
+  // เวอร์ชันเก่าได้ (fourcorners.law-style version tab bar ฝั่ง web)
+  async getDetail(id: number, versionId?: number) {
+    const document = await documentRepository.findByIdWithVersions(id);
     if (!document) {
       throw new NotFoundError("ไม่พบเอกสารกฎหมาย");
     }
-    const version = document.versions[0];
+    if (document.versions.length === 0) {
+      throw new NotFoundError("ไม่พบเวอร์ชันของเอกสารนี้");
+    }
+
+    const targetVersionMeta = versionId
+      ? document.versions.find((v) => v.id === versionId)
+      : document.versions.find((v) => v.isLatest);
+    if (!targetVersionMeta) {
+      throw new NotFoundError("ไม่พบเวอร์ชันที่ระบุของเอกสารนี้");
+    }
+
+    const version = await documentRepository.findVersionWithPassages(id, targetVersionMeta.id);
     if (!version) {
-      throw new NotFoundError("ไม่พบเวอร์ชันล่าสุดของเอกสารนี้");
+      throw new NotFoundError("ไม่พบเวอร์ชันที่ระบุของเอกสารนี้");
     }
 
     return {
@@ -88,6 +101,13 @@ export const documentService = {
       title: document.title,
       docType: document.docType,
       citationCode: document.citationCode,
+      // เรียงเก่า→ใหม่ตาม findByIdWithVersions — ฝั่ง web ใช้ index+1 เป็นเลข tab (ฉบับที่ 1, 2, ...)
+      versions: document.versions.map((v) => ({
+        id: v.id,
+        versionLabel: v.versionLabel,
+        effectiveFrom: v.effectiveFrom,
+        isLatest: v.isLatest,
+      })),
       version: {
         id: version.id,
         versionLabel: version.versionLabel,

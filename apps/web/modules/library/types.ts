@@ -34,12 +34,21 @@ export interface TocNode {
   children: TocNode[];
 }
 
+export interface VersionSummary {
+  id: number;
+  versionLabel: string;
+  effectiveFrom: string | null;
+  isLatest: boolean;
+}
+
 export interface DocumentDetail {
   id: number;
   lawCode: string;
   title: string;
   docType: string;
   citationCode: string | null;
+  // เรียงเก่า→ใหม่เสมอ — ใช้ index+1 เป็นเลข tab (ฉบับที่ 1, 2, ...) แบบ fourcorners.law
+  versions: VersionSummary[];
   version: {
     id: number;
     versionLabel: string;

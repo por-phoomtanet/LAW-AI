@@ -6,8 +6,9 @@ export const documentController = {
     return { data };
   },
 
-  async get({ params }: { params: { id: string } }) {
-    const data = await documentService.getDetail(Number(params.id));
+  async get({ params, query }: { params: { id: string }; query: { versionId?: string } }) {
+    const versionId = query.versionId ? Number(query.versionId) : undefined;
+    const data = await documentService.getDetail(Number(params.id), versionId);
     return { data };
   },
 };

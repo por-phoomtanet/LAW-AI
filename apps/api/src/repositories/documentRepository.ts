@@ -27,4 +27,25 @@ export const documentRepository = {
       },
     });
   },
+
+  // เบาๆ ไม่ดึง passages — ใช้ render tab bar เลือกเวอร์ชันฝั่ง web (เทียบ fourcorners.law)
+  findByIdWithVersions(id: number) {
+    return prisma.document.findFirst({
+      where: { id, isActive: true },
+      include: {
+        versions: {
+          orderBy: { effectiveFrom: "asc" },
+          select: { id: true, versionLabel: true, effectiveFrom: true, isLatest: true },
+        },
+      },
+    });
+  },
+
+  // documentId กันเอกสารอื่นสวม versionId ของเอกสารที่ไม่ใช่ตัวเอง
+  findVersionWithPassages(documentId: number, versionId: number) {
+    return prisma.documentVersion.findFirst({
+      where: { id: versionId, documentId },
+      include: { passages: { orderBy: { ordinal: "asc" } } },
+    });
+  },
 };

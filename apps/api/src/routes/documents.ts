@@ -11,4 +11,5 @@ export const documentRoutes = new Elysia({ prefix: "/api/documents" })
   })
   .get("/:id", documentController.get, {
     params: t.Object({ id: t.String() }),
+    query: t.Object({ versionId: t.Optional(t.String()) }),
   });

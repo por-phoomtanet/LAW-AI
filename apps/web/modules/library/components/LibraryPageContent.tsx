@@ -13,6 +13,7 @@ export default function LibraryPageContent() {
   const [loadingList, setLoadingList] = useState(true);
   const [selectedDocType, setSelectedDocType] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedVersionId, setSelectedVersionId] = useState<number | null>(null);
   const [detail, setDetail] = useState<DocumentDetailType | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
@@ -24,6 +25,12 @@ export default function LibraryPageContent() {
       .finally(() => setLoadingList(false));
   }, [selectedDocType]);
 
+  // เลือกเอกสารใหม่ (selectedId เปลี่ยน) → reset กลับไปเวอร์ชันล่าสุดเสมอ ไม่ค้าง versionId ของ
+  // เอกสารก่อนหน้า (versionId เป็นของเอกสารนั้นๆ โดยเฉพาะ ใช้ข้ามเอกสารไม่ได้)
+  useEffect(() => {
+    setSelectedVersionId(null);
+  }, [selectedId]);
+
   useEffect(() => {
     if (selectedId == null) {
       setDetail(null);
@@ -31,10 +38,10 @@ export default function LibraryPageContent() {
     }
     setLoadingDetail(true);
     libraryApi
-      .get(selectedId)
+      .get(selectedId, selectedVersionId ?? undefined)
       .then(setDetail)
       .finally(() => setLoadingDetail(false));
-  }, [selectedId]);
+  }, [selectedId, selectedVersionId]);
 
   return (
     <div className="flex h-[calc(100vh-6rem)] gap-4">
@@ -64,7 +71,7 @@ export default function LibraryPageContent() {
             <Spin />
           </div>
         ) : (
-          <DocumentDetail document={detail} />
+          <DocumentDetail document={detail} onSelectVersion={setSelectedVersionId} />
         )}
       </div>
     </div>
