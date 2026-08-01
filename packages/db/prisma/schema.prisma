@@ -144,6 +144,12 @@ model Passage {
   // (Phase 5.3) — Prisma ไม่รู้จัก GENERATED ALWAYS AS ประกาศเป็น Unsupported ไว้
   // กัน `migrate dev` เห็นเป็น drift แล้วพยายามลบคอลัมน์นี้ทิ้ง
   searchVector  Unsupported("tsvector")?
+  // Phase 6 — semantic search. 3072 มิติ = text-embedding-3-large (EMBEDDING_MODEL)
+  // ต้องเป็น halfvec ไม่ใช่ vector: HNSW ของ pgvector รองรับแค่ 2000 มิติสำหรับชนิด vector
+  // (พิสูจน์กับ DB จริงแล้ว ดู migration 20260801153713) halfvec รองรับถึง 4000 มิติ
+  // และกินพื้นที่ครึ่งเดียว (2 ไบต์/มิติ) โดย recall ต่างน้อยมาก
+  // nullable: passage ที่ยังไม่ backfill ต้องเป็น null ได้ ไม่งั้น embed ทีละ batch ไม่ได้
+  embedding     Unsupported("halfvec(3072)")?
 
   @@unique([versionId, ordinal])
   @@index([versionId])
