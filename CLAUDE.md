@@ -32,7 +32,7 @@
 - **PostgreSQL + pgvector extension** — relational DB หลัก + vector store สำหรับ RAG (ไม่แยก vector DB ต่างหาก เพื่อลด moving parts)
 - **Prisma ORM** — schema, migration, type-safe query (เวกเตอร์ column ใช้ `Unsupported("vector(n)")`)
 - **OpenRouter** — LLM หลักสำหรับ chat/citation grounding, เรียกผ่าน OpenAI-compatible Chat Completions API (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL` — default `deepseek/deepseek-v4-flash`) ดู § AI / RAG Architecture
-- **OpenAI Embeddings** — text embeddings สำหรับ RAG (`EMBEDDING_MODEL=openai/text-embedding-3-small`) — เรียกตรงผ่าน OpenAI Embeddings API เพราะ OpenRouter ไม่มี embeddings endpoint (ดูหมายเหตุใน § AI / RAG Architecture ข้อ 2)
+- **Embeddings ผ่าน OpenRouter** — text embeddings สำหรับ semantic search (`EMBEDDING_MODEL=openai/text-embedding-3-large`) เรียกผ่าน OpenRouter ด้วย `OPENROUTER_API_KEY` ตัวเดียวกับ chat — **ไม่ต้องมี `OPENAI_API_KEY` แยก** (แก้ตอน Phase 6.5 หลังทดสอบจริงพบว่า OpenRouter มี `/v1/embeddings` แล้ว ต่างจากที่เอกสารนี้เคยระบุไว้ ดู § AI / RAG Architecture ข้อ 2)
 - **Next.js 15** (App Router) — chat UI + admin dashboard
 - **Tailwind CSS** — utility-first styling (หน้า chat เขียน custom component ไม่ใช้ Ant Design Table-heavy pattern)
 - **Ant Design** — เฉพาะฝั่ง admin/library management (Table, Form, Modal)
@@ -65,20 +65,22 @@
 
 | Env var | ค่า default |
 |---|---|
-| `EMBEDDING_MODEL` | `openai/text-embedding-3-small` |
+| `EMBEDDING_MODEL` | `openai/text-embedding-3-large` |
 | `OPENAI_API_KEY` | ต้องมีแยกต่างหาก |
 
-**OpenRouter ไม่มี embeddings endpoint** (รองรับแค่ chat/completions) — เรียก OpenAI Embeddings API ตรง (`https://api.openai.com/v1/embeddings`) ด้วย `OPENAI_API_KEY` คนละตัวกับ `OPENROUTER_API_KEY` โดยตัด prefix `"openai/"` ออกจาก `EMBEDDING_MODEL` ก่อนส่ง (`text-embedding-3-small` คือ model id จริงฝั่ง OpenAI, ส่วน `"openai/"` เป็น namespace convention แบบ OpenRouter เท่านั้น)
+> ⚠️ **แก้ข้อมูลตอน Phase 6.5 — ย่อหน้าเดิมตรงนี้เคยระบุว่า "OpenRouter ไม่มี embeddings endpoint" ซึ่งไม่จริงแล้ว** ทดสอบจริงกับ key ของโปรเจกต์: `POST https://openrouter.ai/api/v1/embeddings` ใช้งานได้ปกติ คืนมิติถูกต้อง (3072 สำหรับ large, 1536 สำหรับ small), รองรับ batch (`input` เป็น array, คืน `index` ถูกลำดับ) และคืน `usage` ที่มี **`cost` เป็นดอลลาร์จริง** มาให้ด้วย (ละเอียดกว่า OpenAI ที่ให้แค่ token count)
+
+**ใช้ `OPENROUTER_API_KEY` ตัวเดียวทั้ง chat และ embeddings** — ไม่ต้องมี `OPENAI_API_KEY` แยกอีกต่อไป (ถอดออกจาก `REQUIRED_ENV_VARS` แล้ว) และ **ไม่ต้องตัด prefix `"openai/"`** ออกจาก `EMBEDDING_MODEL` — ส่งตามที่ตั้งใน env ตรงๆ เพราะ OpenRouter ใช้ model id แบบ namespace เป็นปกติ (รับทั้งสองแบบ) การส่งตรงๆ ทำให้สลับไปใช้ embedding model ของ provider อื่นบน OpenRouter ได้โดยไม่ต้องแก้โค้ด
 
 ใช้สำหรับ:
-- Embed ทุก `DocumentChunk` ตอน ingest (batch embedding, `text-embedding-3-small` = 1536 มิติ — ต้องปรับ `vector(n)` ใน Prisma schema ให้ตรง ไม่ใช่ 1024 แบบเดิม)
+- Embed ทุก `DocumentChunk` ตอน ingest (batch embedding, /text-embedding-3-large` = 1536 มิติ — ต้องปรับ `vector(n)` ใน Prisma schema ให้ตรง ไม่ใช่ 1024 แบบเดิม)
 - Embed query ของ user ก่อนค้นหาใน `pgvector`
 
 ### 3. RAG Retrieval Pipeline
 
 ```
 User query (TH)
-  → embed query ผ่าน OpenAI Embeddings API (text-embedding-3-small)
+  → embed query ผ่าน OpenAI Embeddings API /text-embedding-3-large)
   → pgvector cosine similarity search บน DocumentChunk.embedding (top-K, K=8-12)
   → filter เพิ่มด้วย metadata (document.type, citationCode ตรง exact match ถ้า query ระบุมาตราชัดเจน)
   → ใส่ chunk แต่ละอันเป็นข้อความมีเลขกำกับ [1] [2] ... ต่อท้าย system/context message
@@ -286,7 +288,7 @@ model DocumentChunk {
   content      String                  @db.Text
   chunkIndex   Int
   contentHash  String                  // dedupe ก่อน re-embed
-  embedding    Unsupported("vector(1536)")  // 1536 มิติ = text-embedding-3-small ของ OpenAI (EMBEDDING_MODEL)
+  embedding    Unsupported("vector(1536)")  // 1536 มิติ =/text-embedding-3-large ของ OpenAI (EMBEDDING_MODEL)
   createdAt    DateTime                @default(now())
 
   @@index([documentId])
@@ -795,7 +797,205 @@ Service throw error ภาษาไทยที่ user เข้าใจได
   - 📝 commit: `feat(web): legal chat page with citation side panel`
   - component ใหม่: `CitationPanel.tsx` (แผงขวา) + `CitationBadge.tsx` (เลข `[n]` ในเนื้อความ, คลิกได้) — ข้อมูล citations มาจาก `Message.citations` ที่ backend validate ไว้แล้วใน 5.5 (มี `documentId`/`passageId`/`citedText`/`chunkIndex` เท่าที่ field เดิมรองรับ)
 
+---
 
+### Phase 6 — Semantic Search ด้วย Embedding (แก้ปัญหาคำถามที่ไม่มีคำตรงในตัวบท)
+
+> **ที่มา**: ผู้ใช้ค้นคำว่า "กฎหมาย pdpa" แล้วไม่เจอ ทั้งที่ค้น "กฎหมายคุ้มครองข้อมูลส่วนบุคคล" เจอปกติ — สาเหตุคือ **"PDPA" ไม่เคยปรากฏในตัวบทกฎหมายจริงเลยแม้แต่ตัวเดียว** (ตัวบทใช้ชื่อเต็มภาษาไทยเท่านั้น) ระบบค้นหาปัจจุบัน (full-text `simple` + trigram) จับคู่ได้แค่ **ตัวอักษรที่ปรากฏจริง** ไม่มีความเข้าใจเชิงความหมาย และ trigram ก็ช่วยไม่ได้เพราะ `"pdpa"` (ละติน) กับ `"คุ้มครองข้อมูลส่วนบุคคล"` (ไทย) ไม่มีตัวอักษรร่วมกันเลยสักตัว — คนละสาเหตุกับบั๊ก Thai word-segmentation ที่แก้ไปแล้วใน FIX ของ 5.4 (นั่นเป็นเรื่องตำแหน่งช่องว่าง)
+>
+> **ทำไมเลือก embedding ไม่ใช่ alias table**: alias table (map `"PDPA"` → `"คุ้มครองข้อมูลส่วนบุคคล"` เอง) ชัวร์ 100% แต่ครอบคลุมแค่คำที่ hardcode ไว้ล่วงหน้า — embedding แก้ได้กว้างกว่ามาก ครอบคลุมทั้งคำย่อข้ามภาษา (PDPA/กสทช./ก.ล.ต.) และคำถาม paraphrase ทั่วไป ("กฎหมายเกี่ยวกับการขโมยข้อมูลส่วนตัว" ที่ไม่มีคำไหนตรงกับตัวบทเป๊ะ) โดยไม่ต้องมานั่งเติม alias ทีละคำ — **แลกกับค่า API ต่อเนื่องและงาน pipeline ที่เพิ่มขึ้น** (เหตุผลที่ Phase 5.3 ตัดสินใจไม่ทำตั้งแต่แรก แต่ schema เผื่อไว้ให้เพิ่มทีหลังได้โดยไม่ breaking)
+>
+> **ไม่ใช่การแทนที่ full-text/trigram — เป็นการเพิ่มขาที่ 3 (hybrid)**: คลังกฎหมายเป็น citation-heavy ผู้ใช้ถามด้วยเลขมาตรา/ชื่อกฎหมายตรงๆ บ่อยมาก ซึ่ง exact-match + full-text ทำได้ดีกว่าและถูกกว่า embedding อยู่แล้ว — ต้อง merge ผลทั้ง 3 ทาง (exact → full-text → trigram → vector) ไม่ใช่ทิ้งของเดิม
+>
+> **โมเดล**: `text-embedding-3-large` (3072 มิติ) ตามที่ผู้ใช้เลือก — `.env` ตั้งค่าไว้แล้ว (`EMBEDDING_MODEL=openai/text-embedding-3-large`) ต้องตัด prefix `"openai/"` ก่อนส่งเข้า OpenAI API ตาม § AI/RAG Architecture ข้อ 2
+
+**ตัวเลขจริงที่วัดจาก local corpus แล้ว (2026-08-01, หลัง ingest ครบ 1935–2025)** — ใช้ประกอบการตัดสินใจ scope:
+
+| ตัวชี้วัด | ค่าจริง |
+|---|---|
+| Passage ทั้งหมด | 307,368 |
+| **Passage เฉพาะ `isLatest=true`** | **93,634 (30%)** |
+| ขนาดตัวอักษรรวม (เฉพาะ isLatest) | 37.3 ล้านตัวอักษร |
+| ความยาวเฉลี่ย/สูงสุดต่อ passage | 398 / 75,285 ตัวอักษร |
+| Passage ที่ยาวเกิน 8,000 ตัวอักษร | 43 (เกิน 20,000: 11) |
+| ขนาด DB ปัจจุบัน | 831 MB |
+
+- [x] 6.1 DB: เพิ่ม embedding column บน `Passage` + HNSW index
+  - **⚠️ gotcha สำคัญที่สุดของ Phase นี้ — pgvector's HNSW index รองรับสูงสุดแค่ 2,000 มิติ สำหรับชนิด `vector`** แต่ `text-embedding-3-large` = **3,072 มิติ** → ประกาศเป็น `vector(3072)` จะ **เก็บข้อมูลได้แต่สร้าง HNSW index ไม่ได้** (ตกไปเป็น sequential scan ทั้งตาราง 93k แถวทุก query = ช้ามาก) ต้องใช้ **`halfvec(3072)`** แทน (half-precision, HNSW รองรับถึง 4,000 มิติ) — ยืนยันแล้วว่า pgvector บน container ปัจจุบันเป็น **0.8.5** รองรับ `halfvec` (ต้อง ≥ 0.7.0) | ทางเลือกอื่นถ้าไม่อยากใช้ halfvec: ส่ง `dimensions: 2000` เข้า OpenAI API เพื่อย่อ embedding (text-embedding-3 รองรับ Matryoshka truncation ในตัว) แต่เสียความละเอียดมากกว่าและได้ index เท่าเดิม — **เลือก `halfvec(3072)`**
+  - ประกาศใน `schema.prisma` เป็น `Unsupported("halfvec(3072)")?` (nullable — passage ที่ยังไม่ embed ต้องเป็น null ได้ ไม่งั้น backfill ทีละ batch ไม่ได้) แล้วสร้าง HNSW index ผ่าน raw SQL migration แยก ตาม pattern เดิมของ `searchVector`/GIN index ใน 5.3
+  - **อย่าสับสนกับ `DocumentChunk.embedding Unsupported("vector(1536)")` ที่มีอยู่เดิม** — นั่นเป็นตารางเก่าจาก Phase 1 ที่ seed script ใช้ ไม่ได้ถูกใช้ในเส้นทาง retrieval ของ Phase 4/5 เลย งาน Phase นี้ทำบน `Passage` เท่านั้น
+  - migration: `20260801153713_add_passage_embedding` (เขียน SQL เองไม่ผ่าน `migrate dev` เพราะเคยค้างมาแล้วใน FIX #14 — ใช้ `migrate deploy` apply แทน)
+  - 🧪 test: **พิสูจน์ gotcha 2000 มิติกับ Postgres ตัวจริงก่อนเขียน migration** — `CREATE INDEX ... hnsw (emb vector_cosine_ops)` บน `vector(3072)` → `ERROR: column cannot have more than 2000 dimensions for hnsw index` ✅ ส่วน `halfvec(3072)` + `halfvec_cosine_ops` → `CREATE INDEX` สำเร็จ ✅ | `migrate deploy` → applied ✅ | `\d "Passage"` ยืนยัน column `halfvec(3072)` + index `Passage_embedding_hnsw_idx` มีจริง ✅
+  - 📝 commit: `feat(db): add halfvec embedding column and hnsw index on Passage`
+
+- [x] 6.2 API: `embeddingClient.ts` + สคริปต์ backfill embedding ของ corpus เดิม
+  - `clients/embeddingClient.ts` — singleton `new OpenAI({ apiKey: process.env.OPENAI_API_KEY })` เรียก OpenAI ตรง ไม่ผ่าน OpenRouter (Dev Standard #1 + § AI/RAG ข้อ 2) ตัด prefix `"openai/"` จาก `EMBEDDING_MODEL` ก่อนส่ง
+  - **embed เฉพาะ passage ที่อยู่บน version `isLatest=true` เท่านั้น** — retrieval filter `isLatest` อยู่แล้ว การ embed อีก 213,734 passage ของเวอร์ชันเก่าคือจ่ายเงินทิ้งเปล่าๆ (ประหยัด 70% ทันที: 93,634 แทน 307,368)
+  - **ต้อง truncate ก่อนส่ง** — OpenAI embeddings จำกัด input ที่ 8,191 token/รายการ แต่มี passage ยาวถึง 75,285 ตัวอักษร (43 รายการเกิน 8,000 ตัวอักษร) ถ้าไม่ตัดจะ error ทั้ง batch — ตัดที่ระดับตัวอักษรแบบ conservative ก่อนพอ (ไม่ต้องนับ token จริง) เพราะเป็นแค่ 0.05% ของทั้งหมด
+  - batch หลาย passage ต่อ 1 request (OpenAI รับ array ได้) + เขียนลง DB ผ่าน `$executeRaw` (Prisma Client ไม่มี field `Unsupported` ใน create/update type — ข้อจำกัดเดียวกับที่เจอตอน seed ใน 1.11)
+  - **dedupe ด้วย `contentHash`** — passage ที่ hash เดิมและ embed แล้วต้องข้าม ไม่เรียก API ซ้ำ (รันสคริปต์ซ้ำ/ingest รอบใหม่จะได้ไม่จ่ายเงินซ้ำ)
+  - ต้อง resume ได้ถ้าสคริปต์ตายกลางทาง (เลือกเฉพาะ `embedding IS NULL` ทุกรอบ) — 93k รายการใช้เวลานาน อย่าออกแบบให้ต้องรันรวดเดียวจบ
+  - **ประมาณการค่าใช้จ่าย**: 37.3M ตัวอักษรไทย ≈ 15–25M token (ภาษาไทย tokenize ได้แย่กว่าอังกฤษมาก ~1.5–2.5 ตัวอักษร/token) × $0.13/1M ของ `text-embedding-3-large` ≈ **$2–4 สำหรับ backfill ครั้งแรก** — ควรทดลองกับ sample เล็กๆ ก่อนเพื่อวัด token จริงจาก `usage` ที่ API ส่งกลับ แล้วค่อยประเมินใหม่ก่อนรันเต็ม
+  - ไฟล์: `packages/ingestion/src/embeddings.ts` (client + truncate + `planBatches` + `toVectorLiteral`) และ `backfillEmbeddings.ts` (สคริปต์ `bun run backfill-embeddings`) รองรับ `--dry-run` (ไม่เรียก API/ไม่เขียน DB) และ `--limit N` (ทดสอบ sample ก่อนรันเต็ม)
+  - ⚠️ **ยังไม่ได้รันจริง — ติด `OPENAI_API_KEY=sk-placeholder-not-set` ใน `.env`** ต้องใส่ key จริงก่อน
+  - 🧪 test: `--dry-run` กับ corpus จริง → เห็น **92,992 passages / 36.9M ตัวอักษร / 1,453 batches ประเมิน $1.60–$3.19** ✅ (ตัวเลขต่ำกว่า 93,634 เพราะกรอง content ว่างออก) | การรัน backfill จริง + ตัวเลข token จริง **ยังไม่ยืนยัน**
+  - 📝 commit: `feat(ingestion): add embedding backfill script with dry-run cost estimate`
+
+- [x] 6.3 Ingestion: ~~embed passage ใหม่อัตโนมัติตอน ingest~~ → **ตัดสินใจใช้สคริปต์ backfill แยกแทน (ไม่ทำ inline embedding)**
+  - **เปลี่ยนแนวทางจากที่ร่างไว้ตอนแรกโดยตั้งใจ**: ให้ ingest จบงานตัวบทก่อน แล้วค่อยรัน `bun run backfill-embeddings` เป็นขั้นตอนแยก — ไม่ฝัง embedding เข้าไปใน ingest pipeline
+  - เหตุผล: `backfillEmbeddings.ts` เลือกจาก `embedding IS NULL` อยู่แล้ว จึง **idempotent + resume ได้เอง** และครอบคลุม passage ใหม่จาก ingest รอบถัดไปโดยอัตโนมัติอยู่แล้วโดยไม่ต้องเขียน logic ซ้ำ — การทำ inline จะได้ code path ที่สอง (ต้อง handle API ล่ม/quota หมดกลางคัน + state ค้างครึ่งๆ กลางๆ) โดยไม่ได้อะไรเพิ่ม ตรงกับข้อกำหนดเดิมที่ว่า **"ห้ามให้ embedding เป็น hard dependency ของการ ingest ตัวบท"** ยิ่งกว่าการทำ inline แล้วดัก error เสียอีก
+  - flow ที่ถูกต้องหลังจากนี้: `bun run ingest <year> <month>` → `bun run backfill-embeddings`
+
+- [x] 6.4 API: hybrid retrieval — เพิ่ม vector search เข้า `retrievalService.ts`
+  - embed คำถามผู้ใช้ → `ORDER BY embedding <=> $queryVector` (cosine distance) filter `isLatest=true` + `embedding IS NOT NULL` → top-K
+  - merge เป็นขาที่ 4 ต่อจากของเดิม: **exact-match (เลขมาตรา) → full-text → trigram → vector** dedupe ด้วย `passageId` เหมือนเดิม cap ที่ `TOP_K` — ลำดับนี้ทำให้คำถามที่ระบุมาตราชัดเจนยังได้คำตอบตรงเป๊ะเหมือนเดิม ส่วน vector มาช่วยเฉพาะเคสที่ 3 ขาแรกหาไม่เจอ
+  - **ต้องไม่ทำให้ query ช้าลงอย่างมีนัยสำคัญ** — vector search เพิ่ม network round-trip ไป OpenAI (embed คำถาม) ทุกครั้งที่ถาม ซึ่งเป็น latency ที่ full-text ไม่มี พิจารณา: เรียก embed ขนานกับ full-text query (ไม่ต่อคิว) หรือข้าม vector ถ้า 3 ขาแรกได้ผลลัพธ์ดีพออยู่แล้ว
+  - **เกณฑ์ทดสอบว่าสำเร็จ**: "กฎหมาย pdpa" ต้องเจอ พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562 (เคสที่จุดชนวน Phase นี้) โดยที่เคสเดิมที่เคยผ่านต้องไม่พัง — เพิ่ม regression test ของทั้งสองแบบใน `retrievalService.test.ts`
+  - merge ด้วย **RRF (Reciprocal Rank Fusion)** ไม่ใช่ต่อ list ตามลำดับขาแบบเดิม — จำเป็นจริงไม่ใช่ over-engineer: คำถาม "กฎหมาย pdpa" ทำให้ full-text แมตช์คำว่า "กฎหมาย" ได้เป็นพันแถวจนเต็ม `TOP_K` ตั้งแต่ขาแรก ผลจาก vector (ขาเดียวที่รู้ว่า PDPA = คุ้มครองข้อมูลส่วนบุคคล) จะไม่มีวันได้เข้ารอบเลยถ้าต่อท้าย — RRF ให้ทุกขาโหวตตามอันดับ (`score = Σ 1/(60+rank)`) แทน ส่วน exact-match (เลขมาตรา) ยังถูกวางไว้หน้าสุดเสมอเพราะแม่นที่สุด
+  - `embeddingClient` ตั้ง `maxRetries: 0, timeout: 5s` — default ของ SDK คือ retry 2 ครั้ง ทำให้คำขอที่ยังไงก็ fail (key ผิด/quota หมด) กินเวลา ~5 วิต่อข้อความ **โดยมีผู้ใช้นั่งรออยู่** (เจอจริงตอนรันเทส Phase นี้ — timeout ทุกเคส) + circuit breaker cooldown 60 วิ ไม่ยิงซ้ำถี่ๆ ตอน OpenAI ล่ม
+
+  - [x] FIX #19: หลัง ingest เต็มคลัง (7,616 → 307,368 passages, โต 40 เท่า) ขา trigram ที่เพิ่มไว้ตอน Phase 5.4 **ช้าจนใช้งานไม่ได้: 6.9 วินาที/query** เจอตอนรันเทส Phase 6 แล้ว timeout ทุกเคส (ไม่ใช่ผลจาก embedding ที่เพิ่งเพิ่ม — เป็นปัญหาเดิมที่โผล่เพราะข้อมูลโตขึ้น) | วินิจฉัยด้วย `EXPLAIN (ANALYZE, BUFFERS)`: GIN index ทำงานปกติดี (Bitmap Index Scan 3.9ms) แต่ **Bitmap Heap Scan 1,430ms** เพราะต้องดึง `content` ก้อนใหญ่ ~10,588 แถวขึ้นมาคำนวณ `word_similarity` ซ้ำเพื่อ sort | before: `word_similarity(query, p.content) > 0.3` ยิงใส่ passage ทั้ง 307k → after: ยิงใส่ **`Document.title` (2,973 แถว)** แล้ว join เอา passage ของเอกสารที่ชื่อตรงมาแทน — **80ms (เร็วขึ้น 86 เท่า) ได้ผลอันดับ 1 ตัวเดียวกันเป๊ะ (similarity = 1.0)** และตรงเจตนาของขานี้มากกว่าเดิมด้วย เพราะมีไว้หา "กฎหมายชื่อนี้" ไม่ใช่หา passage ที่บังเอิญพูดถึงชื่อกฎหมายนั้น
+    - 🧪 test: regression ของ 2 เคสที่ trigram เคยแก้ไว้ (FIX ของ 5.4) ยังผ่านทั้งคู่ — "พระราชบัญญัติกองทุนน้ำมันเชื้อเพลิง พ.ศ. 2562" เจอถูกอันดับ 1-2 ✅, "กฎกระทรวงการแจ้งในกรณีที่ผู้รับหนังสือรับรองการแจ้ง..." เจอถูก ✅ (73ms), "มาตรา 7" exact-match ยังทำงาน ✅ | `bun test` 65 pass 0 fail ✅
+    - 📝 commit: `perf(api): match trigram against document titles instead of passage bodies`
+
+  - 🧪 test: `bun test` → 65 pass 0 fail ✅ | **ยืนยันแล้วว่าไม่มีเทสไหนยิง OpenAI จริงอีก** (mock `embeddingClient` เพิ่มใน `retrievalService.test.ts` + `legalChatCompletion.test.ts` ตาม Dev Standard #7 — ก่อนแก้เทสยิง API จริงทุกครั้งแล้ว timeout) ✅ | regression 3 เคสเดิมผ่านหมด (ดู FIX #19) ✅
+  - ⚠️ **เกณฑ์หลักของ Phase ("กฎหมาย pdpa" ต้องเจอ) ยังไม่ผ่าน — ยังไม่ได้ backfill embedding** (ติด `OPENAI_API_KEY` placeholder) ตอนนี้ vector leg คืน `[]` เสมอ ระบบจึงยังทำงานด้วย 3 ขาเดิม | ยืนยันแล้วว่า degradation ทำงานถูกต้อง: embed fail → log + ข้าม → ผลลัพธ์ยังมาจาก full-text/trigram ครบ ไม่พังทั้งระบบ ✅
+  - 📝 commit: `feat(api): hybrid retrieval with vector search and RRF fusion`
+
+- [x] 6.5 เปลี่ยนมาใช้ OpenRouter สำหรับ embeddings (ตัด `OPENAI_API_KEY` ออกทั้งระบบ)
+  - **ข้อมูลเดิมใน § AI/RAG ข้อ 2 ที่ว่า "OpenRouter ไม่มี embeddings endpoint" ล้าสมัยแล้ว** — ทดสอบจริงกับ key ของโปรเจกต์: `POST https://openrouter.ai/api/v1/embeddings` ใช้งานได้ คืนมิติถูกต้อง, รองรับ batch (`input` เป็น array), และคืน `usage` ที่มี **`cost` จริงเป็นดอลลาร์** มาให้ด้วย (ละเอียดกว่า OpenAI ที่ให้แค่ token) รับ model id ทั้งแบบมีและไม่มี prefix `openai/`
+  - ผลคือ **ไม่ต้องมี `OPENAI_API_KEY` แยกอีกต่อไป** — ใช้ `OPENROUTER_API_KEY` ตัวเดียวทั้ง chat และ embeddings, ถอดออกจาก `REQUIRED_ENV_VARS` ใน `env.ts` และเลิกตัด prefix `openai/` (ส่ง `EMBEDDING_MODEL` ตามที่ตั้งใน env ตรงๆ เพื่อให้สลับไป embedding model ของ provider อื่นบน OpenRouter ได้โดยไม่ต้องแก้โค้ด)
+  - 🧪 test: curl ตรงไปที่ OpenRouter → 3072 มิติสำหรับ large, 1536 สำหรับ small, batch 2 รายการได้ `index: [0,1]` ถูกต้อง ✅ | rebuild `api` container แล้วบูตผ่านทั้งที่ `.env` ไม่มี `OPENAI_API_KEY` แล้ว → `{"status":"ok","db":"connected"}` ✅ | backfill จริงผ่าน OpenRouter สำเร็จ (534 passages) ✅
+  - 📝 commit: `refactor(api): use openrouter for embeddings, drop separate openai key`
+
+- [x] 6.6 ทดสอบเทียบ `small` vs `large` แล้ว **สรุปใช้ `text-embedding-3-large` (3072 มิติ)**
+  - ลอง `small` (1536 มิติ) ก่อนเพราะถูกกว่า 6.5 เท่า ($4.52 → $0.69) และอยู่ใต้ลิมิต HNSW 2000 มิติ (ไม่ต้องพึ่ง `halfvec` ด้วยซ้ำ) — migration `20260801161417_switch_embedding_to_1536` → **แต่ทดสอบแล้วคุณภาพไม่พอ จึงย้อนกลับ** ด้วย migration `20260801162649_switch_embedding_back_to_3072`
+  - **📊 ผลทดสอบคุณภาพ (วัดจริงบน sample 514 passages = PDPA 114 + noise 400)** — บันทึกไว้เพราะเป็นข้อมูลตัดสินใจที่หาไม่ได้จากที่อื่น:
+
+    | คำถาม | vector-only rank ของ พ.ร.บ.คุ้มครองข้อมูลฯ | ผลลัพธ์สุดท้าย (หลัง RRF) |
+    |---|---|---|
+    | `PDPA` (small) | อันดับ 1–5 ทั้งหมด | ✅ เจอ |
+    | `กฎหมาย pdpa` (small) | **อันดับ 4** (dist 0.677 ตามหลัง 0.568) | ❌ **ไม่ติด top 10** |
+    | `กฎหมาย pdpa` (large) | — | ✅ อันดับ 3 |
+
+    สรุป: `small` **รู้จัก** ว่า PDPA = คุ้มครองข้อมูลส่วนบุคคล (ถาม "PDPA" เดี่ยวๆ ได้อันดับ 1-5 เต็ม) แต่พอเติมคำกว้างๆ อย่าง "กฎหมาย" เข้าไป embedding ของคำถามถูกเจือจนเอกสารที่ไม่เกี่ยวขึ้นนำ แล้วอันดับ 4 ไม่แรงพอสู้คะแนนโหวตจาก full-text ใน RRF ได้ — **คำถามจริงของผู้ใช้มักมีคำกว้างๆ ปนแบบนี้ ไม่ได้พิมพ์แต่ keyword เดี่ยวๆ จึงเลือก `large`** (ข้อควรระวัง: ตัวเลขวัดบน 514 passages พอเต็ม 93k คู่แข่งเยอะขึ้น แนวโน้ม `small` จะยิ่งแย่ลง ไม่ใช่ดีขึ้น)
+  - ⚠️ **เปลี่ยนโมเดล = ต้องล้าง embedding เดิมทิ้งทั้งหมดเสมอ** — เวกเตอร์คนละมิติคือคนละ vector space ไม่ใช่แค่ความยาวต่างกัน เทียบ cosine distance ข้ามกันไม่ได้ migration จึง `DROP COLUMN` + `ADD COLUMN` ใหม่ (ทั้ง 2 รอบ)
+  - 📝 commit: `feat(db): use text-embedding-3-large (3072 dims) for semantic search`
+
+---
+
+## 📘 Runbook — รัน embedding backfill บน server
+
+> ทุกคำสั่งด้านล่าง **ทดสอบจริงบน local ผ่าน container แล้ว** ไม่ใช่เขียนจากความจำ — รันจาก `~/LAW-AI` บน server
+>
+> **บริบทที่ต้องเข้าใจก่อน**: `packages/ingestion` **ไม่ได้อยู่ใน runtime image ของ `api`** (Dockerfile stage `runtime` copy แค่ `apps/api/dist` + `packages/db`) จึงรัน backfill ผ่าน `docker compose exec api` ไม่ได้ — ต้อง build stage `build` ที่มีซอร์สครบเป็น image แยก (`law-ai-ingest`) เหมือนที่ทำตอน ingest คลังกฎหมาย
+
+### ขั้นที่ 0 — เอาโค้ดใหม่ขึ้น server ก่อน
+
+```bash
+cd ~/LAW-AI
+git pull                    # ถ้า SSH key ยังติดปัญหา ดู § Key Decisions เรื่อง publickey
+```
+
+### ขั้นที่ 1 — แก้ `.env` บน server (สำคัญ — `.env` ไม่ได้อยู่ใน git จึงไม่มากับ `git pull`)
+
+```bash
+# ตั้งโมเดล embedding (ถ้ายังไม่มีบรรทัดนี้ให้เพิ่มเข้าไป)
+grep -q '^EMBEDDING_MODEL=' .env \
+  && sed -i 's|^EMBEDDING_MODEL=.*|EMBEDDING_MODEL=openai/text-embedding-3-large|' .env \
+  || echo 'EMBEDDING_MODEL=openai/text-embedding-3-large' >> .env
+
+# OPENAI_API_KEY ไม่ต้องมีแล้ว (Phase 6.5) — ลบทิ้งได้ถ้ายังค้างอยู่
+sed -i '/^OPENAI_API_KEY=/d' .env
+
+# ต้องมี OPENROUTER_API_KEY อยู่แล้ว — เช็คให้แน่ใจ
+grep -q '^OPENROUTER_API_KEY=sk-' .env && echo "OPENROUTER_API_KEY: ok" || echo "⚠️ ไม่มี OPENROUTER_API_KEY"
+```
+
+### ขั้นที่ 2 — build image ที่มีซอร์ส `packages/ingestion` ครบ
+
+```bash
+docker build --target build -t law-ai-ingest -f apps/api/Dockerfile .
+```
+
+### ขั้นที่ 3 — apply migration ของ Phase 6 (เพิ่ม column `embedding` + HNSW index)
+
+```bash
+# อ่านค่าจาก .env มาใส่ให้อัตโนมัติ ไม่ต้องพิมพ์รหัสผ่านเอง
+export PW=$(grep '^POSTGRES_PASSWORD=' .env | cut -d= -f2)
+export DBURL="postgresql://postgres:$PW@postgres:5432/law_ai?schema=public"
+
+docker run --rm --network law-ai_default \
+  -e DATABASE_URL="$DBURL" -e DIRECT_URL="$DBURL" \
+  law-ai-ingest sh -c "cd packages/db && bunx prisma migrate deploy"
+```
+> ต้องเห็น `migrations found` + `applied` (หรือ `No pending migrations to apply.` ถ้าเคยรันไปแล้ว) — ยืนยันด้วย:
+> `docker compose exec postgres psql -U postgres -d law_ai -c '\d "Passage"' | grep -i "embedding\|hnsw"`
+
+### ขั้นที่ 4 — ประมาณการค่าใช้จ่ายก่อนจ่ายจริง (dry-run ไม่เรียก API ไม่เขียน DB)
+
+```bash
+export KEY=$(grep '^OPENROUTER_API_KEY=' .env | cut -d= -f2)
+export EMB=$(grep '^EMBEDDING_MODEL=' .env | cut -d= -f2)
+
+docker run --rm --network law-ai_default \
+  -e DATABASE_URL="$DBURL" -e DIRECT_URL="$DBURL" \
+  -e OPENROUTER_API_KEY="$KEY" -e EMBEDDING_MODEL="$EMB" \
+  law-ai-ingest sh -c "bun install --frozen-lockfile >/dev/null 2>&1 && cd packages/ingestion && bun run src/backfillEmbeddings.ts --dry-run"
+```
+
+### ขั้นที่ 5 — ทดสอบ sample เล็กก่อน (จ่ายจริงแต่แค่เศษสตางค์)
+
+```bash
+docker run --rm --network law-ai_default \
+  -e DATABASE_URL="$DBURL" -e DIRECT_URL="$DBURL" \
+  -e OPENROUTER_API_KEY="$KEY" -e EMBEDDING_MODEL="$EMB" \
+  law-ai-ingest sh -c "bun install --frozen-lockfile >/dev/null 2>&1 && cd packages/ingestion && bun run src/backfillEmbeddings.ts --limit 200"
+```
+
+### ขั้นที่ 6 — รันเต็มแบบ detached (ใช้เวลาเป็นสิบนาที–ชั่วโมง SSH หลุดได้ไม่กระทบ)
+
+```bash
+docker run -d --name law-ai-embed --network law-ai_default \
+  -e DATABASE_URL="$DBURL" -e DIRECT_URL="$DBURL" \
+  -e OPENROUTER_API_KEY="$KEY" -e EMBEDDING_MODEL="$EMB" \
+  law-ai-ingest sh -c "bun install --frozen-lockfile >/dev/null 2>&1 && cd packages/ingestion && bun run src/backfillEmbeddings.ts"
+
+docker logs -f law-ai-embed        # ดูความคืบหน้า (Ctrl+C ออกได้ ไม่หยุดงาน)
+```
+> **resume ได้เอง** — สคริปต์เลือกเฉพาะ `embedding IS NULL` ถ้าตายกลางทาง/ถูก kill แค่ `docker rm law-ai-embed` แล้วรันคำสั่งเดิมซ้ำ มันจะทำต่อจากจุดที่ค้าง ไม่เริ่มใหม่และไม่จ่ายซ้ำ
+
+### ขั้นที่ 7 — rebuild `api` ให้ได้โค้ด retrieval ใหม่ แล้วตรวจผล
+
+```bash
+docker rm law-ai-embed                       # เก็บกวาด container ที่จบแล้ว
+docker compose up -d --build api
+curl http://localhost:4002/api/health         # ต้องได้ db:connected
+
+# นับ passage ที่ embed แล้ว
+docker compose exec postgres psql -U postgres -d law_ai -c \
+  "SELECT count(*) FILTER (WHERE embedding IS NOT NULL) AS embedded, count(*) AS total
+   FROM \"Passage\" p JOIN \"DocumentVersion\" v ON v.id=p.\"versionId\" WHERE v.\"isLatest\"=true;"
+```
+แล้วทดสอบบนหน้าเว็บ: ถาม `PDPA` ในแชทกฎหมาย → ต้องเจอ พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562
+
+### ⚠️ ข้อควรระวังเฉพาะ server
+
+- **ชื่อ network** — คำสั่งข้างบนใช้ `law-ai_default` ถ้า project directory ชื่ออื่นจะเปลี่ยนตาม เช็คด้วย `docker network ls | grep law-ai` ก่อน
+- **`bun install --frozen-lockfile` จำเป็นต้องมี** ใน stage `build` เพราะ Dockerfile ไม่ได้ copy `packages/ingestion/node_modules` มาให้ (copy แค่ของ root/api/db) ถ้าไม่รันจะได้ `Cannot find module '@law-ai/db'`
+- **ห้ามลืมขั้นที่ 7** — ถ้า backfill เสร็จแต่ไม่ rebuild `api` ระบบจะยังใช้โค้ด retrieval เก่าที่ไม่มี vector search ผลลัพธ์จะเหมือนเดิมทุกอย่างจนเข้าใจผิดว่า backfill ไม่ได้ผล
+- **พื้นที่ดิสก์** — embedding เพิ่มขนาด DB ราว 286MB (halfvec 1536 มิติ × 93k แถว) ยังไม่รวม HNSW index เช็ค `df -h` ก่อนถ้าพื้นที่เหลือน้อย
+
+---
+
+**เหลือทำก่อนปิด Phase 6:**
+1. ~~ตัดสินใจเรื่องโมเดล~~ → **สรุปใช้ `large`** แล้ว (ดู 6.6)
+2. รัน backfill เต็มคลัง — **local: กำลังรันอยู่** (92,992 passages, ~$4.52) | **server: ยังไม่ได้ทำ ดู Runbook ข้างบน**
+3. ทดสอบเกณฑ์หลัก: "กฎหมาย pdpa" ต้องเจอ พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562 (ยืนยันบน sample แล้วว่าได้อันดับ 3 — ต้องเช็คซ้ำหลัง backfill เต็มเพราะคู่แข่งเยอะขึ้น)
+4. ถ้าผ่าน → เพิ่ม regression test ของเคสนี้ใน `retrievalService.test.ts`
+5. rebuild `api` container ให้ได้โค้ด retrieval ใหม่ (ทั้ง local และ server)
+
+**หนี้ที่ยังค้าง (ไม่ blocking Phase นี้)**: ขา full-text เองก็ช้าลงจาก corpus ที่โต 40 เท่า — คำถามที่มีคำ common อย่าง "มาตรา"/"กฎหมาย" ใช้เวลา ~2 วินาที (วัดจริง) ยังไม่ได้แก้เพราะ FIX #19 จัดการตัวที่ช้าที่สุด (6.9s) ไปแล้วและ Phase นี้เน้น embedding เป็นหลัก — ถ้าจะแก้ต่อ แนวทางคล้ายกัน: จำกัด candidate set ก่อน sort หรือใช้ `ts_rank` บน subset แทนทั้งตาราง
 
 ---
 
@@ -812,7 +1012,7 @@ Service throw error ภาษาไทยที่ user เข้าใจได
 ## Key Decisions (บันทึกเหตุผลไว้กันลืม)
 
 - **OpenRouter แทน Anthropic API โดยตรง**: เลือกเพื่อความยืดหยุ่นในการสลับโมเดล (`OPENROUTER_MODEL`) โดยไม่ผูกกับ provider เดียว — แลกกับการไม่มี native feature บางอย่างที่ Anthropic API มี (citations, prompt caching แบบ `cache_control`, adaptive thinking) ต้องออกแบบ workaround เอง (ดู § AI/RAG Architecture)
-- **Embeddings ผ่าน OpenAI ตรง ไม่ผ่าน OpenRouter**: OpenRouter ไม่มี embeddings endpoint — ต้องมี `OPENAI_API_KEY` แยกจาก `OPENROUTER_API_KEY`
+- **~~Embeddings ผ่าน OpenAI ตรง ไม่ผ่าน OpenRouter~~ → เปลี่ยนแล้วตอน Phase 6.5**: สมมติฐานเดิม ("OpenRouter ไม่มี embeddings endpoint") **พิสูจน์แล้วว่าไม่จริง** — ทดสอบ curl ตรงกับ key ของโปรเจกต์แล้วใช้งานได้ปกติ ปัจจุบันใช้ `OPENROUTER_API_KEY` ตัวเดียวทั้ง chat และ embeddings ตัด `OPENAI_API_KEY` ออกทั้งระบบ **บทเรียน: ข้อจำกัดของ third-party API ที่จดไว้ในเอกสารมีวันหมดอายุ — ตรวจสอบซ้ำก่อนออกแบบระบบให้ซับซ้อนขึ้นเพื่อหลบข้อจำกัดที่อาจไม่มีอยู่แล้ว**
 - **Bun + Elysia แทน Node.js + Express**: performance ที่ดีกว่า + built-in TypeScript/test runner ในตัว (ไม่ต้อง ts-node/Jest แยก) — แลกกับ ecosystem ที่เล็กกว่า Express (เช่น Supertest ใช้ไม่ได้ตรงๆ, ต้อง mock/import Elysia plugin ให้ตรง pattern ของ framework แทนการหา Express middleware สำเร็จรูปมาต่อ)
 - **pgvector แทน vector DB แยก (Pinecone/Weaviate)**: ลด moving parts, ข้อมูล metadata กับ embedding อยู่ table เดียวกัน join ง่าย, scale พอสำหรับขนาดข้อมูลกฎหมายไทย (หลักหมื่น-แสน chunk)
 - **Citation ต้อง validate เองฝั่ง backend**: โมเดลบน OpenRouter ไม่มี native citation feature เหมือน Anthropic — ทุกเลขอ้างอิง `[n]` ที่โมเดลตอบมาต้องเทียบกับ chunk ที่ retrieve จริงก่อนเชื่อ ป้องกันเลขมาตราหลอน/อ้างอิงที่ไม่มีอยู่จริง
@@ -824,3 +1024,9 @@ Service throw error ภาษาไทยที่ user เข้าใจได
 - **CORS ต้องเปิดเอง**: `@elysiajs/cors` เป็น dependency ตั้งแต่ Phase 1 แต่ไม่ได้ mount จริงจนกระทั่ง Phase 2.4 ตอนเทส login จาก browser จริง — เพิ่ม `env.WEB_ORIGIN` (default `http://localhost:3002`) แล้ว `.use(cors({ origin: env.WEB_ORIGIN, credentials: true }))` ใน `app.ts`
 - **Windows: `next build` EPERM บน `.next/trace` ถ้ามี `bun run dev` ค้างอยู่**: ไม่ใช่แค่ VS Code TS server lock อย่างที่ template เดิมเข้าใจ — เจอจริงว่า `next dev`/`next build` สปอว์น child process เป็น `node.exe` แยกจาก `bun.exe` เอง ฆ่าแค่ `bun.exe` ไม่พอ ต้องเช็ค `Get-Process node` ด้วยแล้ว kill ให้หมดก่อน ถ้ายัง lock อยู่ให้ลบ `.next/` ทิ้งแล้ว build ใหม่
 -->
+
+
+
+
+
+//
