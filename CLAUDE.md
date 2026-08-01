@@ -988,12 +988,14 @@ docker compose exec postgres psql -U postgres -d law_ai -c \
 
 ---
 
-**เหลือทำก่อนปิด Phase 6:**
-1. ~~ตัดสินใจเรื่องโมเดล~~ → **สรุปใช้ `large`** แล้ว (ดู 6.6)
-2. รัน backfill เต็มคลัง — **local: กำลังรันอยู่** (92,992 passages, ~$4.52) | **server: ยังไม่ได้ทำ ดู Runbook ข้างบน**
-3. ทดสอบเกณฑ์หลัก: "กฎหมาย pdpa" ต้องเจอ พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562 (ยืนยันบน sample แล้วว่าได้อันดับ 3 — ต้องเช็คซ้ำหลัง backfill เต็มเพราะคู่แข่งเยอะขึ้น)
-4. ถ้าผ่าน → เพิ่ม regression test ของเคสนี้ใน `retrievalService.test.ts`
-5. rebuild `api` container ให้ได้โค้ด retrieval ใหม่ (ทั้ง local และ server)
+**สถานะ Phase 6:**
+1. ~~ตัดสินใจเรื่องโมเดล~~ → **สรุปใช้ `large`** (ดู 6.6)
+2. รัน backfill เต็มคลัง — **server: ✅ เสร็จแล้ว** | **local: ยังค้างที่ ~2,944/93,634 (3%)** เพราะหยุดไว้ระหว่างทาง (รันต่อได้ด้วย `bun run backfill-embeddings` ทำต่อจากที่ค้าง ไม่จ่ายซ้ำ)
+3. **✅ เกณฑ์หลักผ่านแล้ว (ยืนยันบน server จริง หลัง backfill เต็มคลัง)** — ถาม `"กฎหมาย pdpa"` ผ่าน `/api/conversations/:id/messages` แล้วได้ citations `[3] [6] [9]` ชี้ไป **พระราชบัญญัติคุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562** ทั้งหมด ทั้งที่คำว่า "PDPA" ไม่ปรากฏในตัวบทภาษาไทยเลยสักตัว (ก่อน Phase นี้: ไม่ติด top 10 เลย) — พิสูจน์ว่า vector search + RRF + embedding เต็มคลัง ทำงานร่วมกันได้จริงบนข้อมูลขนาดเต็ม ไม่ใช่แค่บน sample 514 passages
+4. ⏳ **ยังไม่ได้ทำ** — เพิ่ม regression test ของเคสนี้ใน `retrievalService.test.ts` (ต้องออกแบบให้ไม่พังเวลา embedding ยังไม่ backfill เช่นบน CI/เครื่องใหม่ — vector leg จะคืน `[]` แล้วเทสจะ fail ทั้งที่โค้ดถูก)
+5. rebuild container — **server: ✅** | local: api ✅ / web ✅
+
+**ผลข้างเคียงที่ได้มาฟรีๆ จากการ debug Phase นี้**: ค้นพบว่า `searchVector` บน server เป็น NULL ทั้ง 307k แถวมาตั้งแต่ Phase 5 (full-text คืนศูนย์มาตลอด) — ซ่อมแล้ว ดู § Schema drift ท้ายไฟล์
 
 **หนี้ที่ยังค้าง (ไม่ blocking Phase นี้)**: ขา full-text เองก็ช้าลงจาก corpus ที่โต 40 เท่า — คำถามที่มีคำ common อย่าง "มาตรา"/"กฎหมาย" ใช้เวลา ~2 วินาที (วัดจริง) ยังไม่ได้แก้เพราะ FIX #19 จัดการตัวที่ช้าที่สุด (6.9s) ไปแล้วและ Phase นี้เน้น embedding เป็นหลัก — ถ้าจะแก้ต่อ แนวทางคล้ายกัน: จำกัด candidate set ก่อน sort หรือใช้ `ts_rank` บน subset แทนทั้งตาราง
 
