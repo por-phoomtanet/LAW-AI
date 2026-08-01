@@ -1029,4 +1029,49 @@ docker compose exec postgres psql -U postgres -d law_ai -c \
 
 
 
-//
+---
+
+## ⚠️ Schema drift บน server — `db push` ข้าม raw SQL ทั้งหมด (เจอจริง 2 รอบ)
+
+**DB บน server ไม่เคยผ่าน `prisma migrate` เลย** — ถูก setup ด้วย `db push` มาตลอด ทำให้ `_prisma_migrations` ไม่มีอยู่จริง (`relation "_prisma_migrations" does not exist`) และ `migrate deploy` ขึ้น `P3005: The database schema is not empty`
+
+**ทำไมถึงอันตรายกว่าที่คิด**: `db push` อ่านแค่ `schema.prisma` **มองไม่เห็น raw SQL ในไฟล์ migration เลย** — object ที่ประกาศใน Prisma ไม่ได้ (extension, generated column, GIN/HNSW index) จะ**หายเงียบๆ โดยไม่มี error** ตรวจสอบตอน Phase 6 แล้วพบว่า server ขาดไปทั้งหมดนี้:
+
+| Object | มาจาก migration | สถานะบน server ก่อนซ่อม |
+|---|---|---|
+| `pg_trgm` extension | 20260729170831 | ❌ หาย (ทำให้ `word_similarity()` error → แชทกฎหมาย 500 ทั้งหมด) |
+| `searchVector` **generated column** | 20260729170831 | ⚠️ มี column แต่เป็น **plain tsvector ที่ NULL ทั้ง 307,368 แถว** |
+| `Passage_searchVector_idx` (GIN) | 20260729170831 | ❌ หาย |
+| `Passage_content_trgm_idx` (GIN) | 20260729170831 | ❌ หาย |
+| `Passage_embedding_hnsw_idx` (HNSW) | 20260801153713 | ❌ หาย |
+
+**ผลกระทบจริงที่ไม่มีใครรู้มาก่อน**: `searchVector` เป็น NULL ทุกแถว แปลว่า **full-text search บน server คืนผลลัพธ์ศูนย์มาตลอด** ตั้งแต่ Phase 5 — ที่ค้นเจออยู่ทุกวันมาจากขา trigram ที่ไม่มี index (sequential scan 307k แถวทุก query) จึงอธิบายทั้งเรื่อง "server ช้ากว่า local" และ "บาง query หาไม่เจอทั้งที่ local เจอ" ไปพร้อมกัน
+
+**SQL ที่ใช้ซ่อม** (ถ้าเจอสภาพเดียวกันอีก):
+```sql
+-- searchVector ต้องเป็น GENERATED ไม่ใช่ column เปล่า — db push สร้างให้แค่แบบเปล่า
+ALTER TABLE "Passage" DROP COLUMN "searchVector";
+ALTER TABLE "Passage" ADD COLUMN "searchVector" tsvector
+  GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED;
+CREATE INDEX "Passage_searchVector_idx" ON "Passage" USING GIN ("searchVector");
+
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS "Passage_embedding_hnsw_idx"
+  ON "Passage" USING hnsw (embedding halfvec_cosine_ops);
+-- Passage_content_trgm_idx ไม่ต้องสร้างแล้ว — FIX #19 ย้ายไปค้น trigram บน Document.title
+```
+> `ALTER TABLE ... ADD COLUMN ... GENERATED` ต้อง rewrite ทั้งตาราง ใช้เวลาหลายนาทีกับ 307k แถว
+
+**คำสั่งตรวจสุขภาพ schema** (รันหลัง deploy ทุกครั้ง):
+```bash
+docker compose exec postgres psql -U postgres -d law_ai -c "
+SELECT
+  (SELECT count(*) FROM pg_extension WHERE extname='pg_trgm')                     AS ext_trgm,
+  (SELECT count(*) FROM pg_indexes WHERE indexname='Passage_searchVector_idx')    AS idx_fts,
+  (SELECT count(*) FROM pg_indexes WHERE indexname='Passage_embedding_hnsw_idx')  AS idx_hnsw,
+  (SELECT count(*) FROM \"Passage\") AS total,
+  (SELECT count(\"searchVector\") FROM \"Passage\") AS searchvector_populated;"
+```
+`searchvector_populated` ต้องเท่ากับ `total` เสมอ ถ้าเป็น 0 แปลว่า generated column พังอีกแล้ว
+
+**บทเรียน**: อย่าใช้ `db push` กับ DB ที่มี raw SQL migration เด็ดขาด — ควร baseline (`prisma migrate resolve --applied <name>` ทีละตัว) แล้วใช้ `migrate deploy` ตลอดไป ตราบใดที่ยังไม่ baseline ปัญหานี้จะกลับมาทุกครั้งที่มี migration ใหม่

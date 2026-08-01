@@ -17,14 +17,21 @@ export const embeddingClient = new OpenAI({
 // ส่ง model id ตามที่ตั้งใน env ตรงๆ — OpenRouter ใช้ namespace (`openai/...`) เป็นปกติ
 export const embeddingModelId = process.env.EMBEDDING_MODEL ?? "openai/text-embedding-3-large";
 
-// OpenAI embeddings จำกัด input ที่ 8,191 token/รายการ — วัดจาก corpus จริงแล้วมี passage
-// ยาวสุดถึง 75,285 ตัวอักษร (43 รายการเกิน 8,000 ตัวอักษร จาก 93,634 = 0.05%)
-// ถ้าไม่ตัดจะ error ทั้ง batch ไม่ใช่แค่รายการเดียว
+// OpenAI embeddings จำกัด input ที่ 8,192 token/รายการ — ถ้าเกินจะ error **ทั้ง batch**
+// ไม่ใช่แค่รายการเดียว (64 passages เสียไปพร้อมกัน)
 //
-// ตัดที่ระดับ "ตัวอักษร" ไม่ใช่ token จริง โดยตั้ง 8,000 ตัวอักษรแบบ conservative มาก:
-// ต่อให้ tokenizer แย่สุดคือ 1 token/ตัวอักษร ก็ยังได้ 8,000 < 8,191 (ของจริงภาษาไทยราว
-// 2-3 ตัวอักษร/token) — ไม่ต้องลาก tokenizer library เข้ามาเพิ่ม dependency เพื่อ 0.05%
-const MAX_CHARS_PER_INPUT = 8_000;
+// ⚠️ เคยตั้งไว้ 8,000 ตัวอักษรโดยให้เหตุผลว่า "ต่อให้แย่สุด 1 token/ตัวอักษร ก็ยังไม่เกิน"
+// — **สมมติฐานนั้นผิด พังจริงตอน backfill ไปได้ 67%**: `Invalid 'input[55]': maximum input
+// length is 8192 tokens` ภาษาไทยมีสระ/วรรณยุกต์/อักขระผสมที่ tokenizer แยกเป็นคนละ token
+// ทำให้ 1 ตัวอักษรกลายเป็นมากกว่า 1 token ได้ (1.06 ตัวอักษร/token ที่วัดได้เป็นค่า"เฉลี่ย"
+// ไม่ใช่ค่าแย่สุด) ลดเหลือ 5,000 เพื่อให้มี headroom ถึง ~1.6 token/ตัวอักษร
+// กระทบเนื้อหาน้อยมาก — passage ส่วนใหญ่ยาวเฉลี่ยแค่ 398 ตัวอักษร
+export const MAX_CHARS_PER_INPUT = 5_000;
+
+// เผื่อกรณีที่ 5,000 ยังไม่พอ (อักขระแปลกๆ ที่ tokenize แย่กว่าที่คาด) — ตัดครึ่งแล้วลองใหม่
+// ดีกว่าปล่อยให้ทั้ง batch พังแล้วต้องมานั่งไล่หาว่า passage ไหนเป็นตัวปัญหา
+const TRUNCATE_RETRY_FACTOR = 0.5;
+const MAX_TRUNCATE_RETRIES = 3;
 
 // จำกัดทั้งจำนวนรายการและตัวอักษรรวมต่อ request — OpenAI มีลิมิต token รวมต่อ request
 // ด้วย ไม่ใช่แค่ต่อรายการ (batch ใหญ่ที่มี passage ยาวๆ หลายอันพร้อมกันจะชนลิมิตนั้น)
@@ -62,18 +69,35 @@ export interface EmbedResult {
   promptTokens: number;
 }
 
+function isTokenLimitError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("maximum input length") || message.includes("8192 tokens");
+}
+
 export async function embedTexts(texts: string[]): Promise<EmbedResult> {
-  const response = await embeddingClient.embeddings.create({
-    model: embeddingModelId,
-    input: texts.map(truncateForEmbedding),
-  });
-  // API ไม่รับประกันลำดับ — เรียงตาม index ก่อนใช้เสมอ ไม่งั้น embedding สลับ passage กัน
-  // แบบเงียบๆ (บั๊กที่หาเจอยากมากเพราะไม่ error แค่ผลลัพธ์ค้นหามั่ว)
-  const sorted = [...response.data].sort((a, b) => a.index - b.index);
-  return {
-    embeddings: sorted.map((item) => item.embedding),
-    promptTokens: response.usage?.prompt_tokens ?? 0,
-  };
+  let limit = MAX_CHARS_PER_INPUT;
+
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const response = await embeddingClient.embeddings.create({
+        model: embeddingModelId,
+        input: texts.map((text) => (text.length > limit ? text.slice(0, limit) : text)),
+      });
+      // API ไม่รับประกันลำดับ — เรียงตาม index ก่อนใช้เสมอ ไม่งั้น embedding สลับ passage กัน
+      // แบบเงียบๆ (บั๊กที่หาเจอยากมากเพราะไม่ error แค่ผลลัพธ์ค้นหามั่ว)
+      const sorted = [...response.data].sort((a, b) => a.index - b.index);
+      return {
+        embeddings: sorted.map((item) => item.embedding),
+        promptTokens: response.usage?.prompt_tokens ?? 0,
+      };
+    } catch (error) {
+      // retry เฉพาะ error เรื่องความยาวเกินเท่านั้น — error อื่น (quota/network/auth)
+      // ตัดสั้นลงก็ไม่ช่วย ต้องโยนออกไปให้เห็นตามจริง
+      if (!isTokenLimitError(error) || attempt >= MAX_TRUNCATE_RETRIES) throw error;
+      limit = Math.floor(limit * TRUNCATE_RETRY_FACTOR);
+      console.warn(`  ⚠️ input ยาวเกิน 8192 token — ตัดเหลือ ${limit} ตัวอักษรแล้วลองใหม่`);
+    }
+  }
 }
 
 // pgvector รับ literal รูปแบบ '[0.1,0.2,...]' — สร้างจาก number ล้วนจึงไม่มีความเสี่ยง

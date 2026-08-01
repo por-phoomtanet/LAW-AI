@@ -4,7 +4,13 @@
 //   --dry-run  ไม่เรียก OpenAI API และไม่เขียน DB — ใช้ตรวจ query/batching/ประมาณการก่อนจ่ายเงินจริง
 //   --limit N  จำกัดจำนวน passage (ทดสอบกับตัวอย่างเล็กๆ ก่อนรันเต็ม)
 import { prisma, Prisma } from "@law-ai/db";
-import { embedTexts, planBatches, toVectorLiteral, embeddingModelId } from "./embeddings";
+import {
+  embedTexts,
+  planBatches,
+  toVectorLiteral,
+  embeddingModelId,
+  MAX_CHARS_PER_INPUT,
+} from "./embeddings";
 
 interface PendingPassage {
   id: number;
@@ -53,7 +59,10 @@ async function main() {
   }
 
   const batches = planBatches(pending, (p) => p.content);
-  const totalChars = pending.reduce((sum, p) => sum + Math.min(p.content.length, 8000), 0);
+  const totalChars = pending.reduce(
+    (sum, p) => sum + Math.min(p.content.length, MAX_CHARS_PER_INPUT),
+    0,
+  );
   console.log(
     `ต้อง embed ${pending.length.toLocaleString()} passages ` +
       `(${(totalChars / 1_000_000).toFixed(1)}M ตัวอักษร) ใน ${batches.length.toLocaleString()} batches`,
