@@ -4,10 +4,12 @@
   "version": "0.1.0",
   "scripts": {
     "ingest": "bun --env-file=../../.env run src/runIngest.ts",
+    "backfill-embeddings": "bun --env-file=../../.env run src/backfillEmbeddings.ts",
     "test": "bun --env-file=../../.env test"
   },
   "dependencies": {
     "@law-ai/core": "*",
-    "@law-ai/db": "*"
+    "@law-ai/db": "*",
+    "openai": "^4.77.0"
   }
 }

@@ -70,8 +70,9 @@
       "name": "@law-ai/ingestion",
       "version": "0.1.0",
       "dependencies": {
-        "@law-ai/core": "workspace:*",
-        "@law-ai/db": "workspace:*",
+        "@law-ai/core": "*",
+        "@law-ai/db": "*",
+        "openai": "^4.77.0",
       },
     },
   },
