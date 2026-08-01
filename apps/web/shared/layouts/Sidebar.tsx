@@ -13,9 +13,11 @@ interface MenuItem {
   route: string;
 }
 
+// แชทกฎหมายอยู่บนสุด — เป็นหน้าแรก (`/`) และเป็นฟีเจอร์หลักของระบบ ส่วนแชททั่วไป
+// ย้ายไป `/chat` ตั้งแต่ตอนสลับ route (ดู commit 7d2464c)
 const MENU_ITEMS: MenuItem[] = [
-  { key: "chat", menuKey: "chat", label: "แชท", route: ROUTES.chat },
   { key: "legal-chat", menuKey: "legal-chat", label: "แชทกฎหมาย", route: ROUTES.legalChat },
+  { key: "chat", menuKey: "chat", label: "แชท", route: ROUTES.chat },
   { key: "library", menuKey: "library", label: "คลังกฎหมาย", route: ROUTES.library },
   { key: "users", menuKey: "users", label: "จัดการผู้ใช้งาน", route: ROUTES.users },
   { key: "settings", menuKey: "settings", label: "ตั้งค่าสิทธิ์", route: ROUTES.settings },

@@ -108,13 +108,22 @@ async function main() {
 
   // โมเดล AI ที่เปิดให้เลือกได้ (Phase 5.1) — ตัวที่ตั้งใน OPENROUTER_MODEL ปัจจุบันต้องอยู่
   // ในลิสต์นี้เสมอ กัน conversation เก่าที่ผูก modelTier ตัวนี้ไว้แล้วหา label โชว์ไม่เจอ
+  // ตัวแรกคือ default ที่ตั้งไว้ใน OPENROUTER_MODEL — วางบนสุดให้ตรงกับที่ผู้ใช้เห็นใน dropdown
+  // (บทสนทนาที่ไม่ได้เลือกโมเดลเองจะได้ตัวนี้) ที่เหลือเรียงจากถูก→แพงตามราคา input/token
   const aiModels = [
-    { modelId: "anthropic/claude-opus-5", label: "Claude Opus 5 (แม่นยำสูงสุด)", sortOrder: 1 },
-    { modelId: "anthropic/claude-sonnet-5", label: "Claude Sonnet 5 (เร็ว สมดุล)", sortOrder: 2 },
+    { modelId: "openai/gpt-5.4-nano", label: "GPT-5.4 nano (ค่าเริ่มต้น)", sortOrder: 1 },
+    { modelId: "qwen/qwen3.7-flash", label: "Qwen 3.7 Flash (ถูกและเร็วที่สุด)", sortOrder: 2 },
     {
       modelId: "deepseek/deepseek-v4-flash",
-      label: "DeepSeek V4 Flash (เร็วที่สุด)",
+      label: "DeepSeek V4 Flash (เร็ว ประหยัด)",
       sortOrder: 3,
+    },
+    { modelId: "openai/gpt-4o-mini", label: "GPT-4o mini (สมดุล)", sortOrder: 4 },
+    { modelId: "anthropic/claude-3-haiku", label: "Claude 3 Haiku (เร็ว)", sortOrder: 5 },
+    {
+      modelId: "qwen/qwen-plus-2025-07-28:thinking",
+      label: "Qwen Plus Thinking (คิดเป็นขั้นตอน)",
+      sortOrder: 6,
     },
   ];
 
@@ -122,9 +131,17 @@ async function main() {
     await prisma.aiModel.upsert({
       where: { modelId: model.modelId },
       create: { ...model, isActive: true },
-      update: { label: model.label, sortOrder: model.sortOrder },
+      update: { label: model.label, sortOrder: model.sortOrder, isActive: true },
     });
   }
+
+  // ปิดโมเดลที่ไม่อยู่ในลิสต์ข้างบน (เช่น claude-opus-5/sonnet-5 ชุดเดิม) แทนการ DELETE —
+  // conversation เก่าเก็บ modelTier เป็น string ไว้แล้ว การลบแถวทิ้งจะทำให้หา label มาโชว์
+  // ไม่เจอ ส่วน isActive=false ทำให้หายจาก dropdown แต่ข้อมูลเดิมยังอ้างอิงได้ครบ
+  await prisma.aiModel.updateMany({
+    where: { modelId: { notIn: aiModels.map((m) => m.modelId) } },
+    data: { isActive: false },
+  });
 
   // เอกสารกฎหมายตัวอย่าง — สำหรับทดสอบ schema/relation เท่านั้น ไม่ใช่ ingestion จริง
   // ข้อมูลจริงจาก Open Law Data Thailand มาจาก ingestion pipeline ใน Phase 3
