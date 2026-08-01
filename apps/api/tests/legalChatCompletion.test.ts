@@ -30,6 +30,20 @@ function fakeStream(parts: Array<{ content?: string; finishReason?: string }>) {
 let nextReplyParts: Array<{ content?: string; finishReason?: string }> = [];
 let lastCallMessages: Array<{ role: string; content: string }> = [];
 
+// ตั้งแต่ Phase 6 retrievalService embed คำถามผ่าน OpenAI ก่อน vector search — ต้อง mock
+// ด้วย ไม่งั้นเทสยิง API จริงทุกครั้ง (ผิด Dev Standard #7 + ช้า) ให้ throw เพื่อทดสอบ
+// เส้นทาง degradation: retrieval ต้องยังคืน context จาก full-text/trigram ได้ตามปกติ
+mock.module("../src/clients/embeddingClient", () => ({
+  embeddingClient: {
+    embeddings: {
+      create: async () => {
+        throw new Error("mocked: ไม่เรียก OpenAI จริงใน test");
+      },
+    },
+  },
+  embeddingModelId: "text-embedding-3-large",
+}));
+
 mock.module("../src/clients/openrouterClient", () => ({
   openrouter: {
     chat: {

@@ -1,7 +1,29 @@
 import { prisma } from "@law-ai/db";
 import { thaiDigitsToArabic } from "@law-ai/core";
+import { embeddingClient, embeddingModelId } from "../../clients/embeddingClient";
 
 const TOP_K = 10;
+
+// ถ้า embed คำถามล้มเหลว (ไม่มี key/quota หมด/OpenAI ล่ม) ให้ข้าม vector search แล้วใช้ 3 ขา
+// เดิมต่อไป — แชทกฎหมายต้องไม่พังทั้งระบบเพราะ embedding เจ๊ง แต่ก็ไม่ควรยิง request ที่รู้ว่า
+// จะ fail ทุกข้อความ: cooldown 60 วิหลังพลาด ค่อยลองใหม่
+const EMBED_FAILURE_COOLDOWN_MS = 60_000;
+let embedDisabledUntil = 0;
+
+async function embedQuery(query: string): Promise<number[] | null> {
+  if (Date.now() < embedDisabledUntil) return null;
+  try {
+    const response = await embeddingClient.embeddings.create({
+      model: embeddingModelId,
+      input: query,
+    });
+    return response.data[0]?.embedding ?? null;
+  } catch (error) {
+    embedDisabledUntil = Date.now() + EMBED_FAILURE_COOLDOWN_MS;
+    console.error("[retrievalService] embed query failed, ข้าม vector search ชั่วคราว:", error);
+    return null;
+  }
+}
 
 interface RawPassageRow {
   passageId: number;
@@ -44,6 +66,53 @@ function buildOrTsQuery(query: string): string {
   return tokens.join(" | ");
 }
 
+// embed คำถาม → ค้นด้วย cosine distance (<=>) บน HNSW index ที่สร้างไว้ใน migration
+// Phase 6.1 — คืน [] ถ้า embed ไม่สำเร็จ หรือยังไม่มี passage ไหนถูก backfill (embedding
+// IS NOT NULL) เพื่อให้ระบบยังทำงานได้ด้วย 3 ขาเดิมระหว่างที่ backfill ยังไม่เสร็จ
+async function embedVectorRows(query: string): Promise<RawPassageRow[]> {
+  const embedding = await embedQuery(query);
+  if (!embedding) return [];
+
+  const literal = `[${embedding.join(",")}]`;
+  return prisma.$queryRaw<RawPassageRow[]>`
+    SELECT p.id as "passageId", d.id as "documentId", d.title as "documentTitle",
+           p."sectionType" as "sectionType", p."sectionNumber" as "sectionNumber",
+           p.content as "content"
+    FROM "Passage" p
+    JOIN "DocumentVersion" v ON v.id = p."versionId"
+    JOIN "Document" d ON d.id = v."documentId"
+    WHERE v."isLatest" = true
+      AND p.embedding IS NOT NULL
+    ORDER BY p.embedding <=> ${literal}::halfvec
+    LIMIT ${TOP_K}
+  `;
+}
+
+// Reciprocal Rank Fusion — วิธีมาตรฐานของ hybrid search สำหรับรวมผลจากหลาย ranking ที่
+// คะแนนคนละหน่วยกันเทียบตรงๆ ไม่ได้ (ts_rank vs word_similarity vs cosine distance)
+// แปลงเป็น "อันดับ" แล้วให้แต่ละขาโหวต: score = Σ 1/(K + rank) — เอกสารที่ติดอันดับดีจาก
+// หลายขาพร้อมกันชนะ, เอกสารที่ขาเดียวมั่นใจมากๆ ก็ยังมีสิทธิ์ติดเข้ามา (ไม่ถูกเบียดตกทั้งหมด
+// แบบการต่อ list ตามลำดับความสำคัญของขา)
+// K=60 เป็นค่ามาตรฐานจากงานวิจัย RRF ดั้งเดิม — ยิ่ง K สูงยิ่งลดอิทธิพลของอันดับต้นๆ
+const RRF_K = 60;
+
+function fuseRrf(legs: RawPassageRow[][]): RawPassageRow[] {
+  const scoreById = new Map<number, number>();
+  const rowById = new Map<number, RawPassageRow>();
+
+  for (const leg of legs) {
+    leg.forEach((row, rank) => {
+      rowById.set(row.passageId, row);
+      const previous = scoreById.get(row.passageId) ?? 0;
+      scoreById.set(row.passageId, previous + 1 / (RRF_K + rank + 1));
+    });
+  }
+
+  return [...scoreById.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([passageId]) => rowById.get(passageId)!);
+}
+
 function citationLabel(row: RawPassageRow): string {
   if (row.sectionType === "section" && row.sectionNumber) {
     return `มาตรา ${row.sectionNumber} (${row.documentTitle})`;
@@ -57,8 +126,14 @@ export const retrievalService = {
   // + exact-match fast path ถ้า query ระบุเลขมาตราชัดเจน → merge ผลลัพธ์ (exact มาก่อน)
   async retrieve(query: string): Promise<RetrievalResult> {
     const orQuery = buildOrTsQuery(query);
-    const fullTextRows = orQuery
-      ? await prisma.$queryRaw<RawPassageRow[]>`
+    const sectionNumber = extractSectionNumber(query);
+
+    // ยิงทั้ง 4 ขาขนานกัน — vector search ต้องรอ embed คำถามจาก OpenAI ก่อน (network
+    // round-trip ที่ full-text/trigram ไม่มี) ถ้าทำแบบ sequential latency จะบวกเข้าไปตรงๆ
+    // ทุกข้อความ พอขนานกันแล้วเวลารวมเท่ากับขาที่ช้าที่สุดแทนที่จะเป็นผลรวม
+    const [fullTextRows, exactRows, trigramRows, vectorRows] = await Promise.all([
+      orQuery
+        ? prisma.$queryRaw<RawPassageRow[]>`
           SELECT p.id as "passageId", d.id as "documentId", d.title as "documentTitle",
                  p."sectionType" as "sectionType", p."sectionNumber" as "sectionNumber",
                  p.content as "content"
@@ -70,11 +145,10 @@ export const retrievalService = {
           ORDER BY ts_rank(p."searchVector", to_tsquery('simple', ${orQuery})) DESC
           LIMIT ${TOP_K}
         `
-      : [];
+        : [],
 
-    const sectionNumber = extractSectionNumber(query);
-    const exactRows = sectionNumber
-      ? await prisma.$queryRaw<RawPassageRow[]>`
+      sectionNumber
+        ? prisma.$queryRaw<RawPassageRow[]>`
           SELECT p.id as "passageId", d.id as "documentId", d.title as "documentTitle",
                  p."sectionType" as "sectionType", p."sectionNumber" as "sectionNumber",
                  p.content as "content"
@@ -86,32 +160,57 @@ export const retrievalService = {
             AND p."sectionNumber" = ${sectionNumber}
           LIMIT 5
         `
-      : [];
+        : [],
 
-    // pg_trgm fallback — 'simple' tsvector ตัดคำแค่ตามช่องว่าง/วรรคตอน ไม่มี Thai word
-    // segmentation จริง ถ้าผู้ใช้พิมพ์คำติดกันคนละจุดกับที่ตัวบทต้นฉบับมีช่องว่างคั่นไว้
-    // (เช่น พิมพ์ "พระราชบัญญัติกองทุนน้ำมันเชื้อเพลิง" ทั้งที่ตัวบทเก็บเป็น "พระราชบัญญัติ กองทุนน้ำมันเชื้อเพลิง"
-    // สองคำแยกกัน) full-text search ข้างบนจะไม่แมตช์อะไรเลยแม้เอกสารจะมีอยู่จริง — word_similarity
-    // เทียบ character trigram แทน token identity เลยไม่สนใจว่าช่องว่างอยู่ตรงไหน (index
-    // Passage_content_trgm_idx มีอยู่แล้วจาก migration Phase 5.3 แต่ไม่เคยถูกใช้จริงจนตอนนี้)
-    const trigramRows = await prisma.$queryRaw<RawPassageRow[]>`
+      // pg_trgm fallback — 'simple' tsvector ตัดคำแค่ตามช่องว่าง/วรรคตอน ไม่มี Thai word
+      // segmentation จริง ถ้าผู้ใช้พิมพ์คำติดกันคนละจุดกับที่ตัวบทต้นฉบับมีช่องว่างคั่นไว้
+      // (เช่น พิมพ์ "พระราชบัญญัติกองทุนน้ำมันเชื้อเพลิง" ทั้งที่ตัวบทเก็บเป็น "พระราชบัญญัติ กองทุนน้ำมันเชื้อเพลิง"
+      // สองคำแยกกัน) full-text search ข้างบนจะไม่แมตช์อะไรเลยแม้เอกสารจะมีอยู่จริง
+      //
+      // ⚠️ เทียบกับ "ชื่อเอกสาร" (Document.title) ไม่ใช่เนื้อ passage — เปลี่ยนตอน Phase 6
+      // หลัง ingest เต็มคลัง (7,616 → 307,368 passages) แล้ววัดได้ว่าเวอร์ชันเดิมที่ยิงใส่
+      // p.content ใช้เวลา 6.9 วินาที/query (EXPLAIN: GIN index ทำงานปกติ 3.9ms แต่ Bitmap
+      // Heap Scan ต้องดึง content ก้อนใหญ่หมื่นแถวมาคำนวณ word_similarity ซ้ำ = 1.4s+)
+      // ยิงใส่ title (2,973 แถว) ได้ผลลัพธ์อันดับ 1 ตัวเดียวกันเป๊ะ (similarity = 1.0) ใน 80ms
+      // — เร็วขึ้น 86 เท่า และตรงเจตนามากกว่าด้วย เพราะขานี้มีไว้หา "กฎหมายชื่อนี้" ไม่ใช่หา
+      // passage ที่บังเอิญพูดถึงชื่อกฎหมายนั้น
+      prisma.$queryRaw<RawPassageRow[]>`
+      WITH matched AS (
+        SELECT d.id, word_similarity(${query}, d.title) AS sim
+        FROM "Document" d
+        WHERE word_similarity(${query}, d.title) > 0.4
+        ORDER BY sim DESC
+        LIMIT 3
+      )
       SELECT p.id as "passageId", d.id as "documentId", d.title as "documentTitle",
              p."sectionType" as "sectionType", p."sectionNumber" as "sectionNumber",
              p.content as "content"
-      FROM "Passage" p
-      JOIN "DocumentVersion" v ON v.id = p."versionId"
-      JOIN "Document" d ON d.id = v."documentId"
-      WHERE v."isLatest" = true
-        AND word_similarity(${query}, p.content) > 0.3
-      ORDER BY word_similarity(${query}, p.content) DESC
-      LIMIT ${TOP_K}
-    `;
+      FROM matched m
+      JOIN "Document" d ON d.id = m.id
+      JOIN "DocumentVersion" v ON v."documentId" = d.id AND v."isLatest" = true
+      JOIN LATERAL (
+        SELECT * FROM "Passage" px
+        WHERE px."versionId" = v.id
+        ORDER BY px.ordinal
+        LIMIT 4
+      ) p ON true
+      ORDER BY m.sim DESC, p.ordinal
+    `,
 
-    // merge เอา exact match ขึ้นก่อนเสมอ ตามด้วย full-text แล้วค่อย trigram (fuzzy สุด priority
-    // ต่ำสุด), dedupe ด้วย passageId, cap ที่ TOP_K
+      // vector search (Phase 6) — ขาเดียวที่ "เข้าใจความหมาย" ไม่ได้จับคู่ตัวอักษร แก้เคสที่
+      // 3 ขาบนทำไม่ได้เลย เช่นค้น "PDPA" (คำย่อภาษาอังกฤษที่ไม่เคยปรากฏในตัวบทไทยสักตัว
+      // จึงไม่มีทั้ง token ตรงและ trigram ร่วม) ให้เจอ พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล
+      embedVectorRows(query),
+    ]);
+
+    // exact match (เลขมาตราที่ผู้ใช้ระบุตรงๆ) ขึ้นก่อนเสมอ — แม่นที่สุดและมีไม่เกิน 5 รายการ
+    // ที่เหลือ fuse ด้วย RRF ไม่ใช่ต่อกันตามลำดับขา เพราะการต่อแบบเดิมจะทำให้ vector ถูกเบียด
+    // ตกไปทั้งหมด: คำถามอย่าง "กฎหมาย pdpa" ทำให้ full-text แมตช์คำว่า "กฎหมาย" ได้เป็นพันแถว
+    // จนเต็ม TOP_K ตั้งแต่ขาแรก ผลลัพธ์จาก vector (ขาเดียวที่รู้ว่า PDPA = คุ้มครองข้อมูล
+    // ส่วนบุคคล) จะไม่มีวันได้เข้ารอบเลย — RRF ให้ทุกขาช่วยกันโหวตตามอันดับแทน
     const seen = new Set<number>();
     const merged: RawPassageRow[] = [];
-    for (const row of [...exactRows, ...fullTextRows, ...trigramRows]) {
+    for (const row of [...exactRows, ...fuseRrf([fullTextRows, trigramRows, vectorRows])]) {
       if (seen.has(row.passageId)) continue;
       seen.add(row.passageId);
       merged.push(row);
