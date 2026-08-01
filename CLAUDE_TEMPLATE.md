@@ -317,6 +317,44 @@ services:
 
 **⚠️ bind port ที่ต้องเข้าถึงจากภายในเท่านั้นด้วย `127.0.0.1:` เสมอ** — `"${POSTGRES_PORT}:5432"` เฉยๆ จะเปิด DB ออกอินเทอร์เน็ตสาธารณะ (เจอบอทสแกนหา user `postgres`/`strapi`/`admin` แล้วเดารหัสผ่านจริง ถ้าใช้รหัสง่ายๆ อย่าง `postgres:postgres` จะโดนยึดได้จริง) service ที่ต้องคุยกันใช้ docker network ภายในอยู่แล้ว ไม่ต้อง publish ออก host เลย
 
+### 4.3 CORS — ต้อง mount จริง + อ่าน origin จาก env
+
+**การมี `@elysiajs/cors` ใน `package.json` ไม่ได้แปลว่า CORS ทำงาน** ต้อง `.use()` เข้า app จริงๆ ด้วย — พลาดจุดนี้แล้วจะไม่มีอะไรฟ้องเลยจนกว่าจะเปิด browser จริง (curl/เทสผ่าน `app.handle()` ไม่ส่ง `Origin` header จึงไม่โดน CORS ตรวจ) อาการคือ API ตอบ 200 ปกติทุกอย่างแต่หน้าเว็บขึ้น network error
+
+```ts
+// apps/api/src/app.ts
+import { cors } from '@elysiajs/cors'
+
+export const app = new Elysia()
+  .use(errorHandler)
+  .use(cors({ origin: env.WEB_ORIGIN, credentials: true }))  // ← ต้องมีบรรทัดนี้จริง
+  .use(authRoutes)
+```
+
+```ts
+// apps/api/src/utils/env.ts — origin มาจาก env เสมอ ห้าม hardcode โดเมนในโค้ด
+WEB_ORIGIN: process.env.WEB_ORIGIN ?? 'http://localhost:3002',
+```
+
+```bash
+# .env (root) — dev
+WEB_ORIGIN="http://localhost:3002"
+# .env บน server — ต้องเปลี่ยนเป็นโดเมน/IP จริงที่เปิดเว็บ ไม่งั้น browser บล็อก
+WEB_ORIGIN="http://<domain-or-ip>:3002"
+```
+
+**`credentials: true` จำเป็นถ้าใช้ JWT/cookie** — ไม่ใส่แล้ว browser จะไม่แนบ credential ข้าม origin ให้
+
+**วิธีเทส CORS จริงโดยไม่ต้องเปิด browser** — ยิง preflight ตรงๆ:
+```bash
+curl -i -X OPTIONS http://localhost:4002/api/auth/login \
+  -H "Origin: http://localhost:3002" \
+  -H "Access-Control-Request-Method: POST"
+# ต้องเห็น header: Access-Control-Allow-Origin ตรงกับ Origin ที่ส่งไป
+```
+
+> **ข้อจำกัดที่ควรรู้**: `WEB_ORIGIN` ตัวเดียวรองรับได้ origin เดียว ถ้าต้องเข้าจากหลายที่พร้อมกัน (localhost ตอน dev + โดเมน server) ให้เปลี่ยนเป็นรับ comma-separated แล้ว `.split(',')` ส่งเป็น array — `@elysiajs/cors` รับ `origin` เป็น array ได้
+
 ### 5. Consistent API Response Format
 ```ts
 return { data: result, message: 'ok' }              // Success — return object ตรงๆ, Elysia serialize ให้
