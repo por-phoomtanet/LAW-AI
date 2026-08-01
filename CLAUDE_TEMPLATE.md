@@ -254,6 +254,69 @@ const required = ['DATABASE_URL', 'JWT_SECRET']
 required.forEach(k => { if (!process.env[k]) throw new Error(`Missing env: ${k}`) })
 ```
 
+### 4.1 `.env` ไฟล์เดียวที่ root เท่านั้น — ห้ามมี `.env` ย่อยรายแอป
+
+**มี `.env` ได้ไฟล์เดียวคือที่ root ของ repo** ห้ามสร้าง `apps/api/.env`, `apps/web/.env`, `packages/db/.env` แยกเด็ดขาด
+
+| | |
+|---|---|
+| ✅ | `/.env` (จริง — gitignore ไว้) + `/.env.example` (ตัวอย่าง — commit ลง git) |
+| ❌ | `apps/api/.env`, `apps/web/.env.local`, `packages/db/.env` |
+
+**เหตุผล**: ค่าเดียวกันถูกใช้หลายที่ (เช่น `POSTGRES_PASSWORD` ใช้ทั้ง docker-compose ตอนสร้าง DB, ฝั่ง API ตอนต่อ DB, และสคริปต์ migrate) ถ้าแยกไฟล์เมื่อไหร่ค่าจะไม่ตรงกันแบบเงียบๆ แล้วดีบักยากมาก — อาการคือ "ทำไม service นี้ต่อ DB ได้แต่อีกตัวไม่ได้"
+
+วิธีให้แต่ละ workspace อ่าน `.env` ที่ root:
+```jsonc
+// package.json ของแต่ละ workspace — ชี้กลับไปที่ root เสมอ
+{ "scripts": { "dev": "bun --env-file=../../.env run src/index.ts" } }
+```
+```yaml
+# docker-compose.yml — service ที่ต้องใช้ env ทั้งชุด
+env_file: .env
+```
+
+**ถ้า `.env.example` มีตัวแปรใหม่ ต้องอัปเดตพร้อม PR เสมอ** — คนที่ clone ใหม่ต้อง copy แล้วรันได้เลยโดยไม่ต้องมาไล่ถามว่าขาดตัวไหน
+
+### 4.2 `docker-compose.yml` ต้องอ่านค่าจาก env เท่านั้น — ห้าม hardcode
+
+**ห้ามใส่รหัสผ่าน/ชื่อ user/ชื่อ DB/port ตรงๆ ในไฟล์** เพราะ `docker-compose.yml` ถูก commit ลง git แต่ `.env` ไม่ถูก commit
+
+```yaml
+# ❌ ผิด — รหัสผ่านหลุดเข้า git ถาวร + เปลี่ยนต่อ environment ไม่ได้
+services:
+  postgres:
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports: ["5432:5432"]
+  api:
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/mydb?schema=public
+
+# ✅ ถูก — ทุกค่ามาจาก .env ที่ root
+services:
+  postgres:
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports: ["127.0.0.1:${POSTGRES_PORT}:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+  api:
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+    ports: ["${PORT}:${PORT}"]
+```
+
+**ค่าที่ยังคง hardcode ได้ (ไม่ใช่ config ที่ต่างตาม environment)**:
+- `5432` ฝั่งขวาของ port mapping — port **ภายใน** container ที่ image กำหนดตายตัว ไม่เกี่ยวกับเครื่องที่รัน
+- `postgres` ใน connection string — ชื่อ service ใน docker network เดียวกัน ผูกกับชื่อที่ประกาศในไฟล์นี้เอง
+- `image:` tag, `restart:`, `healthcheck` interval — policy ของระบบ ไม่ใช่ค่าที่ต่างตามเครื่อง
+
+**⚠️ bind port ที่ต้องเข้าถึงจากภายในเท่านั้นด้วย `127.0.0.1:` เสมอ** — `"${POSTGRES_PORT}:5432"` เฉยๆ จะเปิด DB ออกอินเทอร์เน็ตสาธารณะ (เจอบอทสแกนหา user `postgres`/`strapi`/`admin` แล้วเดารหัสผ่านจริง ถ้าใช้รหัสง่ายๆ อย่าง `postgres:postgres` จะโดนยึดได้จริง) service ที่ต้องคุยกันใช้ docker network ภายในอยู่แล้ว ไม่ต้อง publish ออก host เลย
+
 ### 5. Consistent API Response Format
 ```ts
 return { data: result, message: 'ok' }              // Success — return object ตรงๆ, Elysia serialize ให้
